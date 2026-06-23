@@ -1,10 +1,10 @@
 const storeKey = 'kidsMathsTutor.v1';
 const app = document.querySelector('#app');
-const AVATAR_OPTIONS = ['🦊', '🐻', '🐼', '🦁', '🐸', '🐵', '🐰', '🐶', '🐱', '🦄'];
+const AVATAR_OPTIONS = ['🦊', '🐻', '🐼', '🦁', '🐸', '🐵', '🐰', '🐶', '🐱', '🦄', '🐧', '🐿️',];
 const YEAR_GROUP_OPTIONS = ['Reception into Year 1', 'Year 1 into Year 2', 'Year 2 into Year 3', 'Year 3 into Year 4', 'Year 4 into Year 5', 'Year 5 into Year 6'];
 const defaultProfiles = [
-  { id: 'child-a', name: 'Ava', avatar: '🦊', stage: 'Reception into Year 1', skillLevels: { add: 1, bonds: 1, clock: 1 }, mastery: { add_1_within_10: 0.35, bonds_to_10_missing_addend: 0.2 } },
-  { id: 'child-b', name: 'Leo', avatar: '🐻', stage: 'Year 1 into Year 2', skillLevels: { add: 2, bonds: 2, clock: 1 }, mastery: { add_1_within_10: 0.55, bonds_to_10_missing_addend: 0.28 } }
+  { id: 'child-a', name: 'Aurella', avatar: '🦊', stage: 'Year 1 into Year 2', skillLevels: { add: 1, bonds: 1, clock: 1 }, mastery: { add_1_within_10: 0.35, bonds_to_10_missing_addend: 0.2 } },
+  { id: 'child-b', name: 'Avarai', avatar: '🦁', stage: 'Reception into Year 1', skillLevels: { add: 2, bonds: 2, clock: 1 }, mastery: { add_1_within_10: 0.55, bonds_to_10_missing_addend: 0.28 } }
 ];
 // Skill groups level up independently (1-4) based on accuracy AND speed on
 // that group, so a child who is fast+accurate at addition but still shaky
