@@ -1,0 +1,12 @@
+{
+  "name": "kids-maths-app",
+  "version": "1.0.0",
+  "description": "Offline-first British English early-primary maths learning prototype",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node tests/run-tests.mjs"
+  },
+  "dependencies": {},
+  "devDependencies": {}
+}

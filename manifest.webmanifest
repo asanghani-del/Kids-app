@@ -1,0 +1,9 @@
+{
+  "name": "Kids Maths Tutor",
+  "short_name": "Maths Tutor",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f7f1e8",
+  "theme_color": "#5f6f52",
+  "icons": []
+}

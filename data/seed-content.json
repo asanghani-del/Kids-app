@@ -1,0 +1,200 @@
+{
+  "subjects": [
+    {
+      "subjectId": "maths",
+      "name": "Maths",
+      "displayOrder": 1,
+      "enabled": true
+    }
+  ],
+  "strands": [
+    {
+      "strandId": "addition",
+      "subjectId": "maths",
+      "name": "Addition",
+      "description": "Adding numbers using objects, pictures and number sentences.",
+      "displayOrder": 3,
+      "enabled": true
+    },
+    {
+      "strandId": "time",
+      "subjectId": "maths",
+      "name": "Time",
+      "description": "Understanding daily time language, clocks and simple duration.",
+      "displayOrder": 11,
+      "enabled": true
+    }
+  ],
+  "skills": [
+    {
+      "skillId": "add_one_more",
+      "subjectId": "maths",
+      "strandId": "addition",
+      "name": "Add one more",
+      "description": "Understand and practise adding one to a number.",
+      "curriculumStage": "Year 1",
+      "sequenceOrder": 12,
+      "prerequisiteSkillIds": ["count_to_10"],
+      "enabled": true
+    },
+    {
+      "skillId": "number_bonds_to_10",
+      "subjectId": "maths",
+      "strandId": "addition",
+      "name": "Number bonds to 10",
+      "description": "Find pairs of numbers that make 10.",
+      "curriculumStage": "Year 1",
+      "sequenceOrder": 13,
+      "prerequisiteSkillIds": ["add_one_more"],
+      "enabled": true
+    },
+    {
+      "skillId": "read_oclock",
+      "subjectId": "maths",
+      "strandId": "time",
+      "name": "Read o'clock times",
+      "description": "Read and set o'clock times on analogue and digital clocks.",
+      "curriculumStage": "Year 1",
+      "sequenceOrder": 30,
+      "prerequisiteSkillIds": [],
+      "enabled": true
+    },
+    {
+      "skillId": "read_half_past",
+      "subjectId": "maths",
+      "strandId": "time",
+      "name": "Read half past times",
+      "description": "Read and set half past times on analogue and digital clocks.",
+      "curriculumStage": "Year 1",
+      "sequenceOrder": 31,
+      "prerequisiteSkillIds": ["read_oclock"],
+      "enabled": true
+    }
+  ],
+  "microSkills": [
+    {
+      "microSkillId": "add_1_within_10",
+      "skillId": "add_one_more",
+      "name": "Add 1 within 10",
+      "difficulty": 1.2,
+      "sequenceOrder": 1,
+      "curriculumStage": "Year 1",
+      "enabled": true
+    },
+    {
+      "microSkillId": "bonds_to_10_missing_addend",
+      "skillId": "number_bonds_to_10",
+      "name": "Find missing number to make 10",
+      "difficulty": 1.8,
+      "sequenceOrder": 1,
+      "curriculumStage": "Year 1",
+      "enabled": true
+    },
+    {
+      "microSkillId": "identify_oclock_analogue",
+      "skillId": "read_oclock",
+      "name": "Identify o'clock on an analogue clock",
+      "difficulty": 1.3,
+      "sequenceOrder": 1,
+      "curriculumStage": "Year 1",
+      "enabled": true
+    },
+    {
+      "microSkillId": "identify_half_past_analogue",
+      "skillId": "read_half_past",
+      "name": "Identify half past on an analogue clock",
+      "difficulty": 1.6,
+      "sequenceOrder": 1,
+      "curriculumStage": "Year 1",
+      "enabled": true
+    }
+  ],
+  "questionTemplates": [
+    {
+      "templateId": "qt_add_1_keypad_001",
+      "subjectId": "maths",
+      "strandId": "addition",
+      "skillId": "add_one_more",
+      "microSkillId": "add_1_within_10",
+      "questionType": "keypad_numeric",
+      "promptTemplate": "{{a}} + 1 = ?",
+      "parameterRules": { "a": { "min": 1, "max": 9 } },
+      "answerLogic": "a + 1",
+      "visualType": "number_line_optional",
+      "explanationTemplateId": "exp_add_one_more_basic",
+      "misconceptionRuleIds": ["mr_add_one_answer_10", "mr_add_one_counted_backwards", "mr_add_one_no_change"],
+      "offlineAvailable": true,
+      "enabled": true,
+      "version": 1
+    },
+    {
+      "templateId": "qt_bonds_10_missing_001",
+      "subjectId": "maths",
+      "strandId": "addition",
+      "skillId": "number_bonds_to_10",
+      "microSkillId": "bonds_to_10_missing_addend",
+      "questionType": "keypad_numeric",
+      "promptTemplate": "{{a}} + __ = 10",
+      "parameterRules": { "a": { "min": 1, "max": 9 } },
+      "answerLogic": "10 - a",
+      "visualType": "ten_frame_optional",
+      "explanationTemplateId": "exp_number_bonds_to_10_basic",
+      "misconceptionRuleIds": ["mr_bond_to_10_add_instead_of_missing"],
+      "offlineAvailable": true,
+      "enabled": true,
+      "version": 1
+    },
+    {
+      "templateId": "qt_time_oclock_choice_001",
+      "subjectId": "maths",
+      "strandId": "time",
+      "skillId": "read_oclock",
+      "microSkillId": "identify_oclock_analogue",
+      "questionType": "multiple_choice_clock",
+      "promptTemplate": "Tap the clock showing {{hour}} o'clock.",
+      "parameterRules": { "hour": { "min": 1, "max": 12 } },
+      "answerLogic": "hour:hour, minute:0",
+      "visualType": "analogue_clock_options",
+      "explanationTemplateId": "exp_oclock_basic",
+      "misconceptionRuleIds": ["mr_time_minute_hand_not_12", "mr_time_confused_hour_minute"],
+      "offlineAvailable": true,
+      "enabled": true,
+      "version": 1
+    }
+  ],
+  "explanationTemplates": [
+    {
+      "explanationTemplateId": "exp_add_one_more_basic",
+      "skillId": "add_one_more",
+      "text": "{{a}} + 1 means one more than {{a}}. Count on one step: {{a}}, {{answer}}. The answer is {{answer}}.",
+      "voiceText": "{{a}} plus one means one more than {{a}}. Count on one step. {{a}}, {{answer}}. The answer is {{answer}}.",
+      "visualType": "number_line_jump",
+      "retryTemplateId": "qt_add_1_keypad_001"
+    },
+    {
+      "explanationTemplateId": "exp_add_one_number_bond_confusion",
+      "skillId": "add_one_more",
+      "misconceptionTag": "number_bond_confusion",
+      "text": "{{a}} + 1 means one more than {{a}}. Count on one step: {{a}}, {{answer}}. You answered 10, so you may have been thinking about making 10. This time, we only needed to add one more.",
+      "voiceText": "{{a}} plus one means one more than {{a}}. You answered 10, so you may have been thinking about making 10. This time, we only needed to add one more.",
+      "visualType": "counter_add_one",
+      "retryTemplateId": "qt_add_1_keypad_001"
+    },
+    {
+      "explanationTemplateId": "exp_number_bonds_to_10_basic",
+      "skillId": "number_bonds_to_10",
+      "text": "We are making 10. Start with {{a}} and count how many more are needed to reach 10. The missing number is {{answer}}.",
+      "voiceText": "We are making ten. Start with {{a}} and count how many more are needed to reach ten. The missing number is {{answer}}.",
+      "visualType": "ten_frame_fill",
+      "retryTemplateId": "qt_bonds_10_missing_001"
+    },
+    {
+      "explanationTemplateId": "exp_oclock_basic",
+      "skillId": "read_oclock",
+      "text": "For o'clock times, the long minute hand points to 12. The short hour hand points to the hour.",
+      "voiceText": "For o'clock times, the long minute hand points to twelve. The short hour hand points to the hour.",
+      "visualType": "clock_hands_highlight",
+      "retryTemplateId": "qt_time_oclock_choice_001"
+    }
+  ]
+}

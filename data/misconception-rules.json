@@ -1,0 +1,94 @@
+{
+  "rules": [
+    {
+      "ruleId": "mr_add_one_no_change",
+      "skillId": "add_one_more",
+      "description": "Child gave the starting number, so may not have added one.",
+      "condition": "childAnswer == a",
+      "tag": "did_not_add",
+      "confidence": 0.8,
+      "explanationTemplateId": "exp_add_one_more_basic"
+    },
+    {
+      "ruleId": "mr_add_one_counted_backwards",
+      "skillId": "add_one_more",
+      "description": "Child gave one less than the starting number, so may have counted backwards.",
+      "condition": "childAnswer == a - 1",
+      "tag": "counted_backwards_instead_of_forwards",
+      "confidence": 0.7,
+      "explanationTemplateId": "exp_add_one_more_basic"
+    },
+    {
+      "ruleId": "mr_add_one_counted_too_far",
+      "skillId": "add_one_more",
+      "description": "Child gave two more than the starting number, so may have counted on too far.",
+      "condition": "childAnswer == a + 2",
+      "tag": "counted_on_too_far",
+      "confidence": 0.7,
+      "explanationTemplateId": "exp_add_one_more_basic"
+    },
+    {
+      "ruleId": "mr_add_one_answer_10",
+      "skillId": "add_one_more",
+      "description": "Child answered 10 when 10 is not the correct answer, so may be thinking about making 10.",
+      "condition": "childAnswer == 10 && correctAnswer != 10",
+      "tag": "number_bond_confusion",
+      "confidence": 0.7,
+      "explanationTemplateId": "exp_add_one_number_bond_confusion"
+    },
+    {
+      "ruleId": "mr_subtract_one_no_change",
+      "skillId": "subtract_one",
+      "description": "Child gave the starting number, so may not have taken one away.",
+      "condition": "childAnswer == a",
+      "tag": "did_not_subtract",
+      "confidence": 0.8,
+      "explanationTemplateId": "exp_subtract_one_basic"
+    },
+    {
+      "ruleId": "mr_subtract_one_counted_forwards",
+      "skillId": "subtract_one",
+      "description": "Child gave one more than the starting number, so may have counted forwards instead of backwards.",
+      "condition": "childAnswer == a + 1",
+      "tag": "counted_forwards_instead_of_backwards",
+      "confidence": 0.8,
+      "explanationTemplateId": "exp_subtract_one_basic"
+    },
+    {
+      "ruleId": "mr_place_value_concatenation",
+      "skillId": "place_value",
+      "description": "Child placed digits next to each other rather than adding tens and ones.",
+      "condition": "questionPattern == '10 + b' && childAnswerString == '10' + b",
+      "tag": "place_value_concatenation",
+      "confidence": 0.9,
+      "explanationTemplateId": "exp_place_value_10_plus_b"
+    },
+    {
+      "ruleId": "mr_time_minute_hand_not_12",
+      "skillId": "read_oclock",
+      "description": "For an o'clock question, the minute hand was not placed on 12.",
+      "condition": "targetMinute == 0 && childMinute != 0",
+      "tag": "minute_hand_not_on_12_for_oclock",
+      "confidence": 0.85,
+      "explanationTemplateId": "exp_oclock_basic"
+    },
+    {
+      "ruleId": "mr_time_confused_hour_minute",
+      "skillId": "read_oclock",
+      "description": "Child may have confused the hour and minute hands.",
+      "condition": "childHour resembles targetMinutePosition || childMinute resembles targetHourPosition",
+      "tag": "confused_hour_and_minute_hand",
+      "confidence": 0.65,
+      "explanationTemplateId": "exp_time_hour_minute_hands"
+    },
+    {
+      "ruleId": "mr_time_oclock_for_half_past",
+      "skillId": "read_half_past",
+      "description": "Child chose or set o'clock when target was half past.",
+      "condition": "targetMinute == 30 && childMinute == 0",
+      "tag": "confused_oclock_and_half_past",
+      "confidence": 0.85,
+      "explanationTemplateId": "exp_half_past_basic"
+    }
+  ]
+}
