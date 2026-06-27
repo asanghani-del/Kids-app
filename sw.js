@@ -1,5 +1,5 @@
-const CACHE = 'kids-maths-app-v5';
-const ASSETS = ['/', '/index.html', '/src/styles.css', '/src/app.js', '/data/seed-content.json', '/data/misconception-rules.json', '/manifest.webmanifest'];
+const CACHE = 'kids-maths-app-v7';
+const ASSETS = ['/', '/index.html', '/src/styles.css', '/src/app.js', '/src/cloud-sync.js', '/src/firebase-config.js', '/data/seed-content.json', '/data/misconception-rules.json', '/manifest.webmanifest'];
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(ASSETS)));
   self.skipWaiting();

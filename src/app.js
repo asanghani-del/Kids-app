@@ -1,3 +1,9 @@
+import {
+  isCloudConfigured, onAuthChange, signInParent, signUpParent, signOutParent,
+  subscribeChildren, subscribeAttempts, subscribeLessonSummaries,
+  saveChildCloud, deleteChildCloud, saveAttemptCloud, saveLessonSummaryCloud
+} from './cloud-sync.js';
+
 const storeKey = 'kidsMathsTutor.v1';
 const app = document.querySelector('#app');
 const AVATAR_OPTIONS = ['🦊', '🐻', '🐼', '🦁', '🐸', '🐵', '🐰', '🐶', '🐱', '🦄', '🐧', '🐿️',];
@@ -40,6 +46,11 @@ let lessonSession = null;
 let seed = null;
 let misconceptionRules = null;
 let editingProfileId = null;
+// Cloud sync state: cloudUser is the signed-in Firebase user (or null if
+// not using cloud sync at all, or not yet signed in on this device).
+let cloudUser = null;
+let cloudUnsubscribers = [];
+let authError = '';
 
 init();
 
@@ -51,7 +62,48 @@ async function init() {
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
   window.addEventListener('online', render);
   window.addEventListener('offline', render);
+  if (isCloudConfigured) {
+    route = { screen: 'signIn' };
+    onAuthChange(handleAuthChange);
+  }
   render();
+}
+// Called once at startup (with whatever Firebase already knows from a
+// previous session on this device) and again any time the user signs in
+// or out. Wires up live Firestore listeners so changes made on *any*
+// signed-in device show up here automatically, and vice versa.
+function handleAuthChange(user) {
+  cloudUser = user;
+  cloudUnsubscribers.forEach(unsub => unsub());
+  cloudUnsubscribers = [];
+  if (!user) {
+    if (route.screen !== 'signIn') setRoute('signIn');
+    return;
+  }
+  let sawChildrenYet = false;
+  Promise.all([
+    subscribeChildren(user.uid, children => {
+      if (!sawChildrenYet) {
+        sawChildrenYet = true;
+        // First snapshot after sign-in: if this account has no cloud
+        // children yet, push whatever is currently local (defaults or
+        // anything created offline) up as the starting point.
+        if (children.length === 0 && state.profiles.length) {
+          state.profiles.forEach(p => saveChildCloud(user.uid, p));
+          return;
+        }
+      }
+      state.profiles = children;
+      if (!state.profiles.find(p => p.id === state.currentProfileId)) {
+        state.currentProfileId = state.profiles[0]?.id || null;
+      }
+      saveState();
+      render();
+    }),
+    subscribeAttempts(user.uid, attempts => { state.attempts = attempts; saveState(); render(); }),
+    subscribeLessonSummaries(user.uid, summaries => { state.lessonSummaries = summaries; saveState(); render(); })
+  ]).then(unsubs => { cloudUnsubscribers = unsubs; });
+  if (route.screen === 'signIn') setRoute('profiles');
 }
 
 function loadState() {
@@ -61,7 +113,6 @@ function loadState() {
     profiles: defaultProfiles,
     attempts: [],
     lessonSummaries: [],
-    syncQueue: [],
     // NOTE: this PIN is a speed-bump to stop a young child wandering into
     // the parent area, NOT a security control. It is stored in plain text
     // in localStorage and is readable/editable by anyone with device access
@@ -115,8 +166,37 @@ function speak(text) {
 
 function render() {
   if (!seed) return;
-  const screens = { profiles, home, lessonIntro, lesson, complete, reviewIntro, review, celebration, parentGate, parentDashboard };
+  const screens = { signIn, profiles, home, lessonIntro, lesson, complete, reviewIntro, review, celebration, parentGate, parentDashboard };
   screens[route.screen]?.();
+}
+
+function signIn() {
+  shell(html`
+    <h1>Sign in</h1>
+    <p>Sign in once on this device to sync lessons and progress across your devices. Use the same email and password on each device/browser.</p>
+    <div class="grid" style="max-width:420px">
+      <label class="small">Email<input class="text-input" type="email" id="signin-email" autocomplete="email"></label>
+      <label class="small">Password<input class="text-input" type="password" id="signin-password" autocomplete="current-password"></label>
+      <p class="small" id="signin-error">${escapeText(authError)}</p>
+      <button class="primary cta-large" data-signin>Sign in</button>
+      <button class="ghost" data-signup>First time? Create account</button>
+    </div>
+  `);
+  document.querySelector('[data-signin]').addEventListener('click', () => submitAuth(signInParent));
+  document.querySelector('[data-signup]').addEventListener('click', () => submitAuth(signUpParent));
+}
+async function submitAuth(authFn) {
+  const email = document.querySelector('#signin-email').value.trim();
+  const password = document.querySelector('#signin-password').value;
+  authError = '';
+  if (!email || !password) { authError = 'Please enter both email and password.'; render(); return; }
+  try {
+    await authFn(email, password);
+    authError = '';
+  } catch (err) {
+    authError = err?.message || 'Sign in failed. Please try again.';
+    render();
+  }
 }
 
 function profiles() {
@@ -157,7 +237,7 @@ function home() {
     <div class="grid stat-grid" style="margin-top:28px">
       <div class="stat-card"><strong>${Math.round((profile.mastery.add_1_within_10 || 0) * 100)}%</strong><span>Add one more</span></div>
       <div class="stat-card"><strong>${Math.round((profile.mastery.bonds_to_10_missing_addend || 0) * 100)}%</strong><span>Number bonds</span></div>
-      <div class="stat-card"><strong>${state.syncQueue.length}</strong><span>Items to sync</span></div>
+      <div class="stat-card"><strong>${state.lessonSummaries.filter(l => l.childId === profile.id).length}</strong><span>Lessons done</span></div>
     </div>
   `);
   document.querySelector('[data-start-lesson]').addEventListener('click', () => setRoute('lessonIntro'));
@@ -375,8 +455,8 @@ function submitAnswer(q, rawAnswer) {
   };
   lessonSession.answers.push(attempt);
   state.attempts.push(attempt);
-  state.syncQueue.push({ type: 'attempt', payload: attempt });
   saveState();
+  if (cloudUser) saveAttemptCloud(cloudUser.uid, attempt).catch(() => {});
   lessonSession.index += 1;
   lessonSession.keypad = '';
   lessonSession.selectedChoice = null;
@@ -417,8 +497,11 @@ function finishLesson() {
   };
   updateMastery(profile, answers, summary.accuracy);
   state.lessonSummaries.push(summary);
-  state.syncQueue.push({ type: 'lessonSummary', payload: summary });
   saveState();
+  if (cloudUser) {
+    saveLessonSummaryCloud(cloudUser.uid, summary).catch(() => {});
+    saveChildCloud(cloudUser.uid, profile).catch(() => {});
+  }
   setRoute('complete', { lessonId: lessonSession.id });
 }
 function updateMastery(profile, answers, accuracy) {
@@ -450,6 +533,22 @@ function updateMastery(profile, answers, accuracy) {
     else if (groupAccuracy < 0.5) next = current - 1;
     levels[group] = Math.max(1, Math.min(4, next));
   });
+  promoteStageIfMastered(profile, accuracy);
+}
+// Skill levels only run 1-4, so once every group hits the ceiling the level
+// label was stuck at e.g. "R-5" forever - there was no path from "maxed out
+// at this year group" to the next one. If all three groups have hit the
+// ceiling and this lesson was also done well, graduate to the next year
+// group and reset skill levels to 1, so the next lesson starts at "1-1"
+// instead of going nowhere.
+function promoteStageIfMastered(profile, accuracy) {
+  const levels = skillLevelsOf(profile);
+  const maxed = levels.add >= 4 && levels.bonds >= 4 && levels.clock >= 4;
+  if (!maxed || accuracy < 0.85) return;
+  const stageIdx = YEAR_GROUP_OPTIONS.indexOf(profile.stage);
+  if (stageIdx === -1 || stageIdx >= YEAR_GROUP_OPTIONS.length - 1) return;
+  profile.stage = YEAR_GROUP_OPTIONS[stageIdx + 1];
+  profile.skillLevels = { add: 1, bonds: 1, clock: 1 };
 }
 function groupBy(items, key) { return items.reduce((acc, item) => ((acc[item[key]] ||= []).push(item), acc), {}); }
 
@@ -618,10 +717,11 @@ function parentDashboard() {
   const summaries = [...state.lessonSummaries].reverse();
   const mistakes = [...state.attempts].filter(a => !a.isCorrect || a.usedHint).slice(-12).reverse();
   shell(html`
-    <div class="top-row"><div><h1>Parent Dashboard</h1><p>Progress, recent mistakes, mastery and offline sync status.</p></div><div class="nav"><button class="ghost" data-route="profiles">Child mode</button><button class="secondary" data-refresh>Refresh content</button><button class="primary" data-sync>Sync now</button></div></div>
+    <div class="top-row"><div><h1>Parent Dashboard</h1><p>Progress, recent mistakes, mastery and offline sync status.</p></div><div class="nav"><button class="ghost" data-route="profiles">Child mode</button><button class="secondary" data-refresh>Refresh content</button>${cloudUser ? '<button class="ghost" data-signout>Sign out</button>' : ''}</div></div>
     <div class="grid dashboard">
       <div class="dashboard-card">
         <h2>Children</h2>
+        ${cloudUser ? `<p class="small">Signed in as ${escapeText(cloudUser.email)}. Children, lessons and attempts sync automatically across any device signed in to this account.</p>` : ''}
         <div class="grid stat-grid">
           ${state.profiles.map(p => p.id === editingProfileId ? editProfileCard(p) : `
             <div class="stat-card">
@@ -642,7 +742,7 @@ function parentDashboard() {
       <div class="dashboard-card">
         <h2>Offline and sync</h2>
         <p>${statusPill()} <span class="badge">Content v${state.contentVersion}</span></p>
-        <p>${state.syncQueue.length} item${state.syncQueue.length === 1 ? '' : 's'} waiting to sync.</p>
+        <p class="small">${cloudUser ? 'Cross-device sync is on for this account - changes save automatically, no action needed.' : 'Cross-device sync is not set up, so progress only lives on this device.'}</p>
       </div>
       <div class="dashboard-card">
         <h2>Lesson history</h2>
@@ -654,14 +754,15 @@ function parentDashboard() {
       </div>
     </div>
   `);
-  document.querySelector('[data-sync]').addEventListener('click', () => { state.syncQueue = []; saveState(); render(); });
   document.querySelector('[data-refresh]').addEventListener('click', () => { state.contentVersion += 1; saveState(); render(); });
+  document.querySelector('[data-signout]')?.addEventListener('click', () => signOutParent());
   document.querySelectorAll('[data-remove-profile]').forEach(btn => btn.addEventListener('click', () => {
     if (state.profiles.length <= 1) return;
     const id = btn.dataset.removeProfile;
     state.profiles = state.profiles.filter(p => p.id !== id);
     if (state.currentProfileId === id) state.currentProfileId = state.profiles[0]?.id || null;
     saveState();
+    if (cloudUser) deleteChildCloud(cloudUser.uid, id).catch(() => {});
     render();
   }));
   document.querySelectorAll('.avatar-option').forEach(btn => btn.addEventListener('click', () => {
@@ -674,15 +775,17 @@ function parentDashboard() {
     const stage = document.querySelector('#new-child-stage').value;
     const errorEl = document.querySelector('#add-child-error');
     if (!name) { errorEl.textContent = 'Please enter a name.'; return; }
-    state.profiles.push({
+    const newProfile = {
       id: `child-${Date.now()}`,
       name,
       avatar,
       stage,
       skillLevels: { add: 1, bonds: 1, clock: 1 },
       mastery: {}
-    });
+    };
+    state.profiles.push(newProfile);
     saveState();
+    if (cloudUser) saveChildCloud(cloudUser.uid, newProfile).catch(() => {});
     render();
   });
   document.querySelectorAll('[data-edit-profile]').forEach(btn => btn.addEventListener('click', () => {
@@ -704,6 +807,7 @@ function parentDashboard() {
     profile.stage = document.querySelector(`#${prefix}-stage`).value;
     editingProfileId = null;
     saveState();
+    if (cloudUser) saveChildCloud(cloudUser.uid, profile).catch(() => {});
     render();
   }));
 }

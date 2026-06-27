@@ -1,0 +1,16 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Everything this app writes lives under users/{uid}/... so the rule
+    // is simple: you can only read/write your own family's data, and only
+    // once signed in. This is intentionally much narrower than the full
+    // schema in 02_Firestore_Schema.md / 03_Firestore_Security_Rules.rules
+    // in the handoff bundle -- those cover curriculum content, admin roles,
+    // review queues etc. for a much larger product. Add rules for more
+    // collections here if/when the app grows into that schema.
+    match /users/{uid}/{collection}/{docId} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+  }
+}
