@@ -248,7 +248,7 @@ function startLesson() {
     childId: profile.id,
     startedAt: new Date().toISOString(),
     index: 0,
-    totalQuestions: 10,
+    totalQuestions: 20,
     answers: [],
     questions: [],
     tierBySkill: {},
@@ -268,7 +268,12 @@ function startLesson() {
 // a skill then adapt up/down *during* a lesson based on streaks (see
 // generateNextQuestion/updateAdaptive), so a child who's flying through
 // easy questions gets pushed harder until something actually trips them up.
-const MAX_TIER = 8;
+const MAX_TIER = 12;
+// Looks up a tier's range from an explicit ladder of brackets, clamping to
+// the last bracket if tier somehow exceeds how many are defined -- this
+// avoids the earlier bug where ranges silently flatlined past tier 4
+// because the bracket ladder only had 3-4 rungs while MAX_TIER kept rising.
+function tieredRange(tier, brackets) { return brackets[Math.min(tier, brackets.length) - 1]; }
 const CLOCK_WORDS = { 5: 'five', 10: 'ten', 15: 'quarter', 20: 'twenty', 25: 'twenty-five', 30: 'half' };
 const NUMBER_WORDS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen'];
 const TENS_WORDS = { 20: 'twenty', 30: 'thirty', 40: 'forty', 50: 'fifty' };
@@ -301,19 +306,19 @@ const SKILL_DEFS = [
   {
     id: 'add_one_more', microSkillId: 'add_1_within_10', label: 'Adding one more',
     explanationType: 'addOne', visualType: 'numberLine',
-    rangeForTier: tier => tier <= 1 ? [1, 5] : tier <= 2 ? [1, 9] : tier <= 4 ? [10, 19] : [10, 50],
+    rangeForTier: tier => tieredRange(tier, [[1,5],[1,9],[10,19],[10,30],[20,40],[30,60],[50,90],[80,130],[120,180],[150,250],[200,350],[300,500]]),
     build: a => ({ prompt: `${a} + 1 = ?`, a, correctAnswer: a + 1 })
   },
   {
     id: 'add_two_more', microSkillId: 'add_2_within_20', label: 'Adding two more',
     explanationType: 'addTwo', visualType: 'numberLine',
-    rangeForTier: tier => tier <= 1 ? [1, 7] : tier <= 2 ? [1, 18] : tier <= 4 ? [10, 28] : [10, 60],
+    rangeForTier: tier => tieredRange(tier, [[1,7],[1,18],[10,28],[10,38],[20,48],[30,68],[50,98],[80,138],[120,188],[150,258],[200,358],[300,508]]),
     build: a => ({ prompt: `${a} + 2 = ?`, a, correctAnswer: a + 2 })
   },
   {
     id: 'subtract_one', microSkillId: 'subtract_1_within_20', label: 'Counting back one',
     explanationType: 'subtractOne', visualType: 'numberLine',
-    rangeForTier: tier => tier <= 1 ? [2, 10] : tier <= 2 ? [2, 20] : [10, 60],
+    rangeForTier: tier => tieredRange(tier, [[2,10],[2,20],[10,30],[10,40],[20,50],[30,70],[50,100],[80,140],[120,190],[150,260],[200,360],[300,510]]),
     build: a => ({ prompt: `${a} - 1 = ?`, a, correctAnswer: a - 1 })
   },
   {
@@ -333,7 +338,7 @@ const SKILL_DEFS = [
     explanationType: 'timesTable', visualType: 'timesTable', minTier: 2,
     rangeForTier: () => [1, 12],
     build: (a, tier) => {
-      const table = tier <= 4 ? [2, 5, 10][randomInt(0, 2)] : [2, 3, 4, 5, 10][randomInt(0, 4)];
+      const table = tier <= 4 ? [2, 5, 10][randomInt(0, 2)] : tier <= 8 ? [2, 3, 4, 5, 10][randomInt(0, 4)] : [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12][randomInt(0, 10)];
       return { prompt: `${a} × ${table} = ?`, a, table, correctAnswer: a * table, choiceType: 'numericChoice', visualData: { a, table } };
     }
   },
@@ -400,9 +405,9 @@ const SKILL_DEFS = [
     build: (a, tier) => {
       const b = randomInt(2, tier <= 3 ? 8 : 35);
       const add = Math.random() < 0.6;
-      if (add) return { prompt: `Tom has ${a} stickers. He gets ${b} more. How many stickers does he have now?`, a, b, correctAnswer: a + b, visualData: { model: 'partWhole', known: a, unknown: b, total: a + b } };
+      if (add) return { prompt: `Tom has ${a} stickers. He gets ${b} more. How many stickers does he have now?`, a, b, correctAnswer: a + b, visualData: { model: 'partWhole', known: a, unknown: b, revealTotal: false } };
       const total = a + b;
-      return { prompt: `Maya has ${total} shells. She gives away ${b}. How many shells are left?`, a: total, b, correctAnswer: a, visualData: { model: 'partWhole', known: b, unknown: a, total } };
+      return { prompt: `Maya has ${total} shells. She gives away ${b}. How many shells are left?`, a: total, b, correctAnswer: a, visualData: { model: 'partWhole', known: b, unknown: a, total, revealTotal: true } };
     }
   },
   {
@@ -411,7 +416,8 @@ const SKILL_DEFS = [
     rangeForTier: tier => tier <= 4 ? [2, 4] : tier <= 6 ? [2, 8] : [2, 12],
     build: denom => {
       const shaded = randomInt(1, denom - 1);
-      return { prompt: 'What fraction is shaded?', a: shaded, correctAnswer: `${shaded}/${denom}`, choiceType: 'fraction', visualData: { shaded, denom } };
+      const style = ['bar', 'circle', 'dots'][randomInt(0, 2)];
+      return { prompt: 'What fraction is shaded?', a: shaded, correctAnswer: `${shaded}/${denom}`, choiceType: 'fraction', visualData: { shaded, denom, style } };
     }
   },
   {
@@ -499,14 +505,37 @@ function topUpChoices(candidates, makeCandidate) {
   }
   return shuffle(set.slice(0, 3));
 }
+// Returns plausible *wrong* answers that correspond to real misconceptions
+// for a given skill (forgot to operate, went the wrong direction, did the
+// opposite operation, off-by-one-extra-step, etc.) rather than just
+// "numbers near the answer" -- e.g. for 23+1=24, this includes 22 (the
+// "counted backwards" error), not just 23/25 either side of the answer.
+function misconceptionSeeds(skillId, built) {
+  const a = built.a, b = built.b, table = built.table;
+  const correct = Number(built.correctAnswer);
+  switch (skillId) {
+    case 'add_one_more': return [correct, a, a - 1, a + 2];
+    case 'add_two_more': return [correct, a, a + 1, a + 3];
+    case 'subtract_one': return [correct, a, a + 1, a - 2];
+    case 'number_bonds_to_10': case 'number_bonds_to_20': return [correct, a, correct + 1, correct - 1];
+    case 'times_tables': return [correct, a + table, a * Math.max(1, table - 1), a * (table + 1)];
+    case 'bar_model_word_problems': return (a !== undefined && b !== undefined) ? [correct, Math.abs(a - b), a + b, b] : [correct];
+    default: return null;
+  }
+}
 function choicesForBuiltQuestion(built, skillDef, min, max) {
   if (built.choiceType === 'clock') return clockChoices(built.correctAnswer, !!built.exactMinute);
   if (built.choiceType === 'fraction') return fractionChoices(built.correctAnswer);
   if (built.choiceType === 'shape') return shapeChoices(built.correctAnswer);
   if (built.choiceType === 'compare') return compareChoices(built.correctAnswer);
   if (built.choiceType === 'pattern') return patternChoices(built.correctAnswer);
-  if (built.choiceType === 'numericChoice') return distractorChoices(Number(built.correctAnswer), [Number(built.correctAnswer), Number(built.correctAnswer) + 1, Number(built.correctAnswer) - 1, Number(built.correctAnswer) + 2], 0, 250);
-  return distractorChoices(built.correctAnswer, [built.correctAnswer, built.a ?? min, Number(built.correctAnswer) + 1, Number(built.correctAnswer) - 1], Math.min(0, min - 5), max + 8);
+  const smartSeeds = misconceptionSeeds(skillDef.id, built);
+  if (built.choiceType === 'numericChoice') {
+    const seeds = (smartSeeds || [Number(built.correctAnswer), Number(built.correctAnswer) + 1, Number(built.correctAnswer) - 1, Number(built.correctAnswer) + 2]).filter(v => v >= 0);
+    return distractorChoices(Number(built.correctAnswer), seeds, 0, Math.max(250, Number(built.correctAnswer) + 30));
+  }
+  const seeds = (smartSeeds || [built.correctAnswer, built.a ?? min, Number(built.correctAnswer) + 1, Number(built.correctAnswer) - 1]).filter(v => v >= 0);
+  return distractorChoices(built.correctAnswer, seeds, Math.min(0, min - 5), max + 8);
 }
 function buildQuestion(skillDef, a, tier) {
   const built = skillDef.build(a, tier);
@@ -543,8 +572,18 @@ function generateNextQuestion(session, profile) {
     skillDef = skills.find(s => s.id === priorityIds[session.index % priorityIds.length]);
   }
   if (!skillDef) {
-    skillDef = skills[(session.index + session.skillCursor) % skills.length];
+    // With a growing skill bank competing for only 10 questions/lesson,
+    // plain round-robin can leave a skill (e.g. a newly-unlocked one like
+    // times tables) unseen for many lessons purely by chance. Instead,
+    // always pull from whichever eligible skills have gone longest without
+    // appearing, with a little randomness among the most-overdue ones so
+    // it isn't perfectly predictable.
+    const lastSeen = profile.skillLastSeenLesson || {};
+    const sorted = [...skills].sort((x, y) => (lastSeen[x.id] ?? -1) - (lastSeen[y.id] ?? -1));
+    const pool = sorted.slice(0, Math.min(3, sorted.length));
+    skillDef = pool[randomInt(0, pool.length - 1)];
   }
+  profile.skillLastSeenLesson = { ...(profile.skillLastSeenLesson || {}), [skillDef.id]: session.lessonNumber || 0 };
   const tier = session.tierBySkill[skillDef.id] || clampTier(profile.skillTiers?.[skillDef.id] || profile.microLevel || 1);
   session.tierBySkill[skillDef.id] = tier;
   const [min, max] = skillDef.rangeForTier(tier);
@@ -621,7 +660,7 @@ function renderQuestionVisual(q) {
 
 function renderQuestionInput(q) {
   if (q.type === 'choice') {
-    return `<div class="response-layout choice-layout"><div class="choices">${q.choices.map(choice => `<button class="choice ${q.minutePrecision ? 'minute-choice' : ''}" data-choice="${escapeText(choice)}">${formatChoice(q, choice)}</button>`).join('')}</div></div>`;
+    return `<div class="response-layout choice-layout"><div class="choices ${q.minutePrecision ? 'minute-choices' : ''}">${q.choices.map(choice => `<button class="choice ${q.minutePrecision ? 'minute-choice' : ''}" data-choice="${escapeText(choice)}">${formatChoice(q, choice)}</button>`).join('')}</div></div>`;
   }
   return html`
     <div class="response-layout">
@@ -637,7 +676,7 @@ function renderQuestionInput(q) {
   `;
 }
 function formatChoice(q, choice) {
-  if (q.visualType === 'clock') return `<span aria-label="${choice}">${clockSvg(choice, q.minutePrecision ? 210 : 132)}</span><br><span class="small">${choice}</span>`;
+  if (q.visualType === 'clock') return `<span aria-label="${choice}">${clockSvg(choice, q.minutePrecision ? 170 : 132)}</span><br><span class="small">${choice}</span>`;
   return escapeText(choice);
 }
 function bindQuestion(q) {
@@ -895,12 +934,31 @@ function barModelSvg(data = {}) {
   const total = Math.max(1, data.total || (data.known || 0) + (data.unknown || 0));
   const knownWidth = Math.max(18, Math.round((data.known || 1) / total * 320));
   const unknownWidth = Math.max(18, 320 - knownWidth);
-  return `<svg class="bar-svg" viewBox="0 0 380 104" role="img" aria-label="Bar model"><rect x="30" y="24" width="${knownWidth}" height="42" rx="8"/><rect x="${30 + knownWidth}" y="24" width="${unknownWidth}" height="42" rx="8" class="unknown"/><text x="${30 + knownWidth / 2}" y="52">${data.known ?? ''}</text><text x="${30 + knownWidth + unknownWidth / 2}" y="52">?</text><text x="190" y="92">Total ${total}</text></svg>`;
+  return `<svg class="bar-svg" viewBox="0 0 380 104" role="img" aria-label="Bar model"><rect x="30" y="24" width="${knownWidth}" height="42" rx="8"/><rect x="${30 + knownWidth}" y="24" width="${unknownWidth}" height="42" rx="8" class="unknown"/><text x="${30 + knownWidth / 2}" y="52">${data.known ?? ''}</text><text x="${30 + knownWidth + unknownWidth / 2}" y="52">?</text>${data.revealTotal ? `<text x="190" y="92">Total ${total}</text>` : ''}</svg>`;
 }
 function fractionSvg(data = {}) {
   const denom = data.denom || 2;
   const shaded = data.shaded || 1;
+  if (data.style === 'circle') return fractionCircleSvg(denom, shaded);
+  if (data.style === 'dots') return fractionDotsHtml(denom, shaded);
   return `<div class="fraction-shape" style="--parts: ${denom}">${Array.from({ length: denom }, (_, i) => `<span class="fraction-part ${i < shaded ? 'shaded' : ''}"></span>`).join('')}</div>`;
+}
+function fractionCircleSvg(denom, shaded) {
+  const cx = 60, cy = 60, r = 54;
+  const toRad = deg => (deg - 90) * Math.PI / 180;
+  const step = 360 / denom;
+  const wedges = Array.from({ length: denom }, (_, i) => {
+    const start = i * step, end = (i + 1) * step;
+    const x1 = cx + r * Math.cos(toRad(start)), y1 = cy + r * Math.sin(toRad(start));
+    const x2 = cx + r * Math.cos(toRad(end)), y2 = cy + r * Math.sin(toRad(end));
+    const largeArc = end - start > 180 ? 1 : 0;
+    const path = denom === 1 ? `M${cx},${cy - r} A${r},${r} 0 1 1 ${cx - 0.01},${cy - r} Z` : `M${cx},${cy} L${x1},${y1} A${r},${r} 0 ${largeArc} 1 ${x2},${y2} Z`;
+    return `<path d="${path}" class="fraction-wedge ${i < shaded ? 'shaded' : ''}"/>`;
+  }).join('');
+  return `<svg class="shape-svg" viewBox="0 0 120 120" role="img" aria-label="Fraction circle">${wedges}</svg>`;
+}
+function fractionDotsHtml(denom, shaded) {
+  return `<div class="coin-row">${Array.from({ length: denom }, (_, i) => `<span class="fraction-dot ${i < shaded ? 'shaded' : ''}"></span>`).join('')}</div>`;
 }
 function shapeSvg(name) {
   const points = { triangle: '60,12 108,104 12,104', square: '20,20 100,20 100,100 20,100', rectangle: '12,32 108,32 108,88 12,88', pentagon: '60,10 108,46 90,108 30,108 12,46', hexagon: '34,14 86,14 112,60 86,106 34,106 8,60' };
@@ -980,8 +1038,8 @@ function parentDashboard() {
               <p class="small">${Object.keys(p.mastery || {}).length ? Object.keys(p.mastery).map(id => `${escapeText(skillLabelForMicroId(id))}: ${skillScore(p.id, id).label}`).join(', ') : 'No lessons yet'}</p>
               ${Object.keys(p.skillTiers || {}).length ? `<p class="small">${Object.entries(p.skillTiers).map(([id, t]) => `${escapeText(SKILL_DEFS.find(s => s.id === id)?.label || id)}: tier ${t}`).join(', ')}</p>` : ''}
               <div class="level-override">
-                <label class="small">Set difficulty level<input type="number" min="1" max="${MAX_TIER}" value="${p.microLevel || 1}" class="answer-box" id="level-input-${p.id}" style="min-width:70px; min-height:48px"></label>
-                <button class="secondary" data-set-level="${p.id}">Apply</button>
+                <label class="small">Set difficulty level: <strong id="level-display-${p.id}">${p.microLevel || 1}</strong> of ${MAX_TIER}</label>
+                <input type="range" min="1" max="${MAX_TIER}" value="${p.microLevel || 1}" class="level-slider" id="level-input-${p.id}">
               </div>
               <button class="danger" data-remove-profile="${p.id}" ${state.profiles.length <= 1 ? 'disabled' : ''}>Remove</button>
             </div>`).join('')}
@@ -1022,25 +1080,31 @@ function parentDashboard() {
     if (cloudUser) deleteChildCloud(cloudUser.uid, id).catch(() => {});
     render();
   }));
-  document.querySelectorAll('[data-set-level]').forEach(btn => btn.addEventListener('click', () => {
-    const id = btn.dataset.setLevel;
-    const target = state.profiles.find(p => p.id === id);
-    if (!target) return;
-    const input = document.querySelector(`#level-input-${id}`);
-    const newLevel = Math.max(1, Math.min(MAX_TIER, Number(input.value) || 1));
-    target.microLevel = newLevel;
-    // Lift any per-skill tiers that are lagging behind so the override
-    // takes effect everywhere immediately, not just for skills the child
-    // hasn't started yet -- otherwise an already-tracked easy skill would
-    // stay stuck at its old (lower) tier despite the override.
-    target.skillTiers = { ...(target.skillTiers || {}) };
-    Object.keys(target.skillTiers).forEach(skillId => {
-      target.skillTiers[skillId] = Math.max(target.skillTiers[skillId], newLevel);
+  document.querySelectorAll('.level-slider').forEach(slider => {
+    const id = slider.id.replace('level-input-', '');
+    const display = document.querySelector(`#level-display-${id}`);
+    // Update the live number while dragging without re-rendering (a
+    // re-render mid-drag would recreate the slider and lose the user's
+    // grip on it), then commit the actual change only once they let go.
+    slider.addEventListener('input', () => { display.textContent = slider.value; });
+    slider.addEventListener('change', () => {
+      const target = state.profiles.find(p => p.id === id);
+      if (!target) return;
+      const newLevel = Math.max(1, Math.min(MAX_TIER, Number(slider.value) || 1));
+      target.microLevel = newLevel;
+      // Lift any per-skill tiers that are lagging behind so the override
+      // takes effect everywhere immediately, not just for skills the child
+      // hasn't started yet -- otherwise an already-tracked easy skill would
+      // stay stuck at its old (lower) tier despite the override.
+      target.skillTiers = { ...(target.skillTiers || {}) };
+      Object.keys(target.skillTiers).forEach(skillId => {
+        target.skillTiers[skillId] = Math.max(target.skillTiers[skillId], newLevel);
+      });
+      saveState();
+      if (cloudUser) saveChildCloud(cloudUser.uid, target).catch(() => {});
+      render();
     });
-    saveState();
-    if (cloudUser) saveChildCloud(cloudUser.uid, target).catch(() => {});
-    render();
-  }));
+  });
   document.querySelector('[data-add-profile]').addEventListener('click', () => {
     const name = document.querySelector('#new-child-name').value.trim();
     const avatar = document.querySelector('#new-child-avatar').value.trim() || '🐧';
@@ -1110,7 +1174,7 @@ function clockSvg(value, size = 132) {
     const inner = i % 5 === 0 ? 48 : 51;
     return `<line x1="${60 + Math.sin(a) * inner}" y1="${60 - Math.cos(a) * inner}" x2="${60 + Math.sin(a) * outer}" y2="${60 - Math.cos(a) * outer}" stroke="#536246" stroke-width="${i % 5 === 0 ? 1.6 : 0.7}"/>`;
   }).join('');
-  return `<svg width="${size}" height="${size}" viewBox="0 0 120 120" role="img" aria-label="Clock ${value}">
+  return `<svg width="${size}" height="${size}" style="max-width:${size}px; width:100%; height:auto; display:block; margin:0 auto" viewBox="0 0 120 120" role="img" aria-label="Clock ${value}">
     <circle cx="60" cy="60" r="54" fill="#fffaf2" stroke="#536246" stroke-width="4"/>
     ${minuteTicks}
     ${[...Array(12)].map((_, i) => { const a = (i + 1) * Math.PI / 6; const x = 60 + Math.sin(a) * 40; const y = 60 - Math.cos(a) * 40; return `<text x="${x}" y="${y + 4}" text-anchor="middle" font-size="9" fill="#536246">${i + 1}</text>`; }).join('')}

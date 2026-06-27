@@ -137,7 +137,9 @@ p { font-size: clamp(1.02rem, 1.6vw, 1.28rem); line-height: 1.5; color: var(--mu
 .choice-layout { display: block; width: min(860px, 100%); }
 .keypad-panel { display: grid; gap: 12px; justify-items: center; }
 .ok-button { width: 100%; min-height: 100%; min-width: 132px; font-size: clamp(1.5rem, 3vw, 2.4rem); margin: 0; }
-.choice.minute-choice { min-height: 250px; font-size: 1.1rem; }
+.choices.minute-choices { grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)) !important; }
+.choice.minute-choice { min-height: 230px; font-size: 1.1rem; padding: 10px; overflow: hidden; }
+.choice.minute-choice svg { max-width: 100%; }
 .visual-line { text-align: center; }
 .bar-svg, .measure-svg { width: min(420px, 100%); height: auto; }
 .bar-svg rect, .measure-svg rect, .shape-svg polygon, .shape-svg circle { fill: var(--cream); stroke: var(--sage-dark); stroke-width: 3; }
@@ -227,4 +229,42 @@ p { font-size: clamp(1.02rem, 1.6vw, 1.28rem); line-height: 1.5; color: var(--mu
 .tier-chip { display: inline-flex; padding: 6px 12px; border-radius: 999px; background: var(--blue); font-size: 0.85rem; font-weight: 700; color: #1d3a57; }
 .level-override { display: flex; align-items: end; gap: 10px; margin: 10px 0; flex-wrap: wrap; }
 .level-override label { display: flex; flex-direction: column; gap: 4px; }
+
+/* Round 6: 20-question lessons, fraction visual variety, clock sizing fix */
+.fraction-wedge { fill: white; stroke: var(--sage-dark); stroke-width: 2; }
+.fraction-wedge.shaded { fill: var(--green); }
+.fraction-dot { display: inline-block; width: 38px; height: 38px; border-radius: 50%; background: white; border: 3px solid var(--sage-dark); }
+.fraction-dot.shaded { background: var(--green); }
+.level-slider {
+  width: 100%;
+  height: 14px;
+  border-radius: 999px;
+  background: #e6dfd1;
+  outline: none;
+  -webkit-appearance: none;
+  appearance: none;
+  margin: 8px 0;
+}
+.level-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: var(--sage);
+  border: 3px solid white;
+  box-shadow: 0 4px 10px rgba(83, 98, 70, 0.35);
+  cursor: pointer;
+}
+.level-slider::-moz-range-thumb {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: var(--sage);
+  border: 3px solid white;
+  box-shadow: 0 4px 10px rgba(83, 98, 70, 0.35);
+  cursor: pointer;
+}
+
+
 
