@@ -6,46 +6,15 @@ import {
 
 const storeKey = 'kidsMathsTutor.v1';
 const app = document.querySelector('#app');
-const AVATAR_OPTIONS = ['🦊', '🐻', '🐼', '🦁', '🐸', '🐵', '🐰', '🐶', '🐱', '🦄', '🐧', '🐿️',];
-const YEAR_GROUP_OPTIONS = ['Reception into Year 1', 'Year 1 into Year 2', 'Year 2 into Year 3', 'Year 3 into Year 4', 'Year 4 into Year 5', 'Year 5 into Year 6'];
 const defaultProfiles = [
-  { id: 'child-a', name: 'Aurella', avatar: '🦊', stage: 'Year 1 into Year 2', skillLevels: { add: 1, bonds: 1, clock: 1 }, mastery: { add_1_within_10: 0.35, bonds_to_10_missing_addend: 0.2 } },
-  { id: 'child-b', name: 'Avarai', avatar: '🦁', stage: 'Reception into Year 1', skillLevels: { add: 2, bonds: 2, clock: 1 }, mastery: { add_1_within_10: 0.55, bonds_to_10_missing_addend: 0.28 } }
+  { id: 'child-a', name: 'Ava', avatar: '🦊', stage: 'Reception into Year 1', microLevel: 1, mastery: { add_1_within_10: 0.35, bonds_to_10_missing_addend: 0.2 } },
+  { id: 'child-b', name: 'Leo', avatar: '🐻', stage: 'Year 1 into Year 2', microLevel: 2, mastery: { add_1_within_10: 0.55, bonds_to_10_missing_addend: 0.28 } }
 ];
-// Skill groups level up independently (1-4) based on accuracy AND speed on
-// that group, so a child who is fast+accurate at addition but still shaky
-// on bonds gets harder addition while bonds stays at a supportive level.
-const SKILL_GROUP_FOR_MICROSKILL = {
-  add_1_within_10: 'add', add_2_3_within_10: 'add', add_within_20: 'add',
-  bonds_to_10_missing_addend: 'bonds', bonds_to_20_missing_addend: 'bonds',
-  identify_oclock_analogue: 'clock'
-};
-const FAST_MS_BY_GROUP = { add: 3500, bonds: 5500, clock: 6000 };
-function skillLevelsOf(profile) { return profile.skillLevels || (profile.skillLevels = { add: 1, bonds: 1, clock: 1 }); }
-// Each year group has its own ladder of sub-levels (R-1..R-5, 1-1..1-5, and
-// so on), so the single number shown under a child's name tells a parent
-// exactly how far through their current year group they've progressed.
-const LEVELS_PER_STAGE = 5;
-const STAGE_CODES = ['R', '1', '2', '3', '4', '5'];
-function stageCode(stage) {
-  const idx = YEAR_GROUP_OPTIONS.indexOf(stage);
-  return STAGE_CODES[idx] ?? 'R';
-}
-// The per-skill difficulty levels (1-4, used to pick question content) are
-// averaged and rescaled onto the 1-5 sub-level ladder so progress across
-// addition, bonds and clocks collapses into one parent-facing number.
-function overallLevel(profile) {
-  const levels = skillLevelsOf(profile);
-  const avg = (levels.add + levels.bonds + levels.clock) / 3;
-  return Math.max(1, Math.min(LEVELS_PER_STAGE, Math.round((avg / 4) * LEVELS_PER_STAGE)));
-}
-function levelLabel(profile) { return `${stageCode(profile.stage)}-${overallLevel(profile)}`; }
 const state = loadState();
 let route = { screen: 'profiles' };
 let lessonSession = null;
 let seed = null;
 let misconceptionRules = null;
-let editingProfileId = null;
 // Cloud sync state: cloudUser is the signed-in Firebase user (or null if
 // not using cloud sync at all, or not yet signed in on this device).
 let cloudUser = null;
@@ -68,6 +37,7 @@ async function init() {
   }
   render();
 }
+
 // Called once at startup (with whatever Firebase already knows from a
 // previous session on this device) and again any time the user signs in
 // or out. Wires up live Firestore listeners so changes made on *any*
@@ -113,6 +83,7 @@ function loadState() {
     profiles: defaultProfiles,
     attempts: [],
     lessonSummaries: [],
+    syncQueue: [],
     // NOTE: this PIN is a speed-bump to stop a young child wandering into
     // the parent area, NOT a security control. It is stored in plain text
     // in localStorage and is readable/editable by anyone with device access
@@ -125,11 +96,7 @@ function loadState() {
 }
 function saveState() { localStorage.setItem(storeKey, JSON.stringify(state)); }
 function html(strings, ...values) { return strings.map((s, i) => s + (values[i] ?? '')).join(''); }
-function setRoute(screen, data = {}) {
-  if (screen !== 'parentDashboard') editingProfileId = null;
-  route = { screen, ...data };
-  render();
-}
+function setRoute(screen, data = {}) { route = { screen, ...data }; render(); }
 function currentProfile() { return state.profiles.find(p => p.id === state.currentProfileId) || state.profiles[0]; }
 function escapeText(value) {
   return String(value ?? '').replace(/[&<>'"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[c]));
@@ -166,7 +133,7 @@ function speak(text) {
 
 function render() {
   if (!seed) return;
-  const screens = { signIn, profiles, home, lessonIntro, lesson, complete, reviewIntro, review, celebration, parentGate, parentDashboard };
+  const screens = { signIn, profiles, home, lessonIntro, lesson, results, review, celebration, parentGate, parentDashboard };
   screens[route.screen]?.();
 }
 
@@ -175,8 +142,8 @@ function signIn() {
     <h1>Sign in</h1>
     <p>Sign in once on this device to sync lessons and progress across your devices. Use the same email and password on each device/browser.</p>
     <div class="grid" style="max-width:420px">
-      <label class="small">Email<input class="text-input" type="email" id="signin-email" autocomplete="email"></label>
-      <label class="small">Password<input class="text-input" type="password" id="signin-password" autocomplete="current-password"></label>
+      <label class="small">Email<input class="answer-box" type="email" id="signin-email" autocomplete="email"></label>
+      <label class="small">Password<input class="answer-box" type="password" id="signin-password" autocomplete="current-password"></label>
       <p class="small" id="signin-error">${escapeText(authError)}</p>
       <button class="primary cta-large" data-signin>Sign in</button>
       <button class="ghost" data-signup>First time? Create account</button>
@@ -210,7 +177,6 @@ function profiles() {
           <div class="avatar">${p.avatar}</div>
           <h2>${escapeText(p.name)}</h2>
           <p>${escapeText(p.stage)}</p>
-          <span class="badge level-badge">Level ${levelLabel(p)}</span>
         </button>`).join('')}
     </div>
   `);
@@ -223,36 +189,35 @@ function profiles() {
 
 function home() {
   const profile = currentProfile();
-  const recent = state.lessonSummaries.filter(l => l.childId === profile.id).slice(-4);
+  const completedCount = state.lessonSummaries.filter(l => l.childId === profile.id).length;
+  const nextLessonNumber = completedCount + 1;
+  const skills = eligibleSkills(profile);
+  const masteryEntries = Object.entries(profile.mastery || {});
   shell(html`
     <div class="top-row"><button class="ghost" data-route="profiles">Change profile</button><div class="nav"><button class="ghost" data-route="parentGate">Parent Area</button>${statusPill()}</div></div>
     <h1>Hello, ${escapeText(profile.name)}</h1>
-    <p><span class="badge level-badge">Level ${levelLabel(profile)}</span> &middot; ${escapeText(profile.stage)}</p>
-    <p>Today's Maths is ready. We will practise one more, counting on and number bonds.</p>
-    <button class="primary cta-large" data-start-lesson>Start Today's Lesson</button>
+    <p>Lesson ${nextLessonNumber} is ready. We will practise ${skills.map(s => s.label.toLowerCase()).join(', ')}.</p>
+    <button class="primary cta-large" data-start-lesson>Start Lesson ${nextLessonNumber}</button>
     <h3>Progress</h3>
-    <div class="progress-dots" aria-label="Recent lesson progress">
-      ${[0,1,2,3,4,5].map(i => `<span class="dot ${i < recent.length ? 'done' : ''}"></span>`).join('')}
-    </div>
-    <div class="grid stat-grid" style="margin-top:28px">
-      <div class="stat-card"><strong>${Math.round((profile.mastery.add_1_within_10 || 0) * 100)}%</strong><span>Add one more</span></div>
-      <div class="stat-card"><strong>${Math.round((profile.mastery.bonds_to_10_missing_addend || 0) * 100)}%</strong><span>Number bonds</span></div>
-      <div class="stat-card"><strong>${state.lessonSummaries.filter(l => l.childId === profile.id).length}</strong><span>Lessons done</span></div>
+    <p class="small">${completedCount} lesson${completedCount === 1 ? '' : 's'} completed so far.</p>
+    <div class="grid stat-grid" style="margin-top:12px">
+      ${masteryEntries.length ? masteryEntries.map(([id, v]) => `<div class="stat-card"><strong>${Math.round((v || 0) * 100)}%</strong><span>${escapeText(skillLabelForMicroId(id))}</span></div>`).join('') : '<div class="stat-card"><strong>—</strong><span>No lessons yet</span></div>'}
+      <div class="stat-card"><strong>${state.syncQueue.length}</strong><span>Items to sync</span></div>
     </div>
   `);
   document.querySelector('[data-start-lesson]').addEventListener('click', () => setRoute('lessonIntro'));
 }
 
 function lessonIntro() {
+  const profile = currentProfile();
+  const lessonNumber = state.lessonSummaries.filter(l => l.childId === profile.id).length + 1;
+  const skills = eligibleSkills(profile);
   shell(html`
-    <div class="top-row"><button class="ghost" data-route="home">Back</button><button class="secondary" data-speak="Today we will practise adding one more, counting on and number bonds.">Hear</button></div>
-    <h1>Today's Lesson</h1>
+    <div class="top-row"><button class="ghost" data-route="home">Back</button><button class="secondary" data-speak="Today we will practise ${skills.map(s => s.label.toLowerCase()).join(', ')}.">Hear</button></div>
+    <h1>Lesson ${lessonNumber}</h1>
     <p>We will practise:</p>
     <ul class="lesson-list">
-      <li>Adding one more</li>
-      <li>Counting on</li>
-      <li>Number bonds to 10</li>
-      <li>A tiny clock warm-up</li>
+      ${skills.map(s => `<li>${escapeText(s.label)}</li>`).join('')}
     </ul>
     <button class="primary cta-large" data-begin>Begin</button>
   `);
@@ -260,105 +225,147 @@ function lessonIntro() {
 }
 
 function startLesson() {
+  const profile = currentProfile();
+  const skills = eligibleSkills(profile);
+  const lessonNumber = state.lessonSummaries.filter(l => l.childId === profile.id).length + 1;
   lessonSession = {
     id: `lesson-${Date.now()}`,
-    childId: currentProfile().id,
+    lessonNumber,
+    childId: profile.id,
     startedAt: new Date().toISOString(),
     index: 0,
+    totalQuestions: 10,
     answers: [],
+    questions: [],
+    tierBySkill: {},
+    streakBySkill: {},
+    skillCursor: randomInt(0, skills.length - 1),
     keypad: '',
-    selectedChoice: null,
     hintOpen: false,
-    questionStartedAt: performance.now(),
-    questions: generateLesson(currentProfile())
+    questionStartedAt: performance.now()
   };
   setRoute('lesson');
 }
 
-// Number pools widen and the addend/target grows with level, so a child who
-// has levelled up sees genuinely harder sums, not just the same +1 facts
-// reshuffled. Recently-asked prompts (this child's last ~20 attempts) are
-// filtered out where possible so the same fact doesn't recur lesson after
-// lesson.
-const ADD_LEVELS = {
-  1: { addends: [1], range: [1, 5] },
-  2: { addends: [1], range: [1, 9] },
-  3: { addends: [2, 3], range: [1, 8] },
-  4: { addends: [2, 3, 4, 5], range: [10, 15] }
-};
-const BOND_LEVELS = {
-  1: { target: 10, range: [1, 3, 8, 9] },
-  2: { target: 10, range: [1, 3, 7, 9] },
-  3: { target: 10, range: [2, 4, 5, 6] },
-  4: { target: 20, range: [11, 13, 15, 17, 19] }
-};
-function recentPrompts(profile) {
-  return new Set(state.attempts.filter(a => a.childId === profile.id).slice(-20).map(a => a.prompt));
+// --- Skill bank -----------------------------------------------------------
+// Each skill knows how to build a question at a given difficulty tier
+// (1 = easiest, 4 = hardest). minTier gates whether the skill appears at
+// all yet, based on the child's overall profile.microLevel. Tiers within
+// a skill then adapt up/down *during* a lesson based on streaks (see
+// generateNextQuestion/updateAdaptive), so a child who's flying through
+// easy questions gets pushed harder until something actually trips them up.
+const SKILL_DEFS = [
+  {
+    id: 'add_one_more', microSkillId: 'add_1_within_10', label: 'Adding one more',
+    explanationType: 'addOne', visualType: 'numberLine',
+    rangeForTier: tier => tier === 1 ? [1, 5] : tier === 2 ? [1, 9] : tier === 3 ? [10, 19] : [10, 30],
+    build: a => ({ prompt: `${a} + 1 = ?`, a, correctAnswer: a + 1 })
+  },
+  {
+    id: 'add_two_more', microSkillId: 'add_2_within_20', label: 'Adding two more',
+    explanationType: 'addTwo', visualType: 'numberLine',
+    rangeForTier: tier => tier === 1 ? [1, 7] : tier === 2 ? [1, 18] : tier === 3 ? [10, 28] : [10, 38],
+    build: a => ({ prompt: `${a} + 2 = ?`, a, correctAnswer: a + 2 })
+  },
+  {
+    id: 'subtract_one', microSkillId: 'subtract_1_within_20', label: 'Counting back one',
+    explanationType: 'subtractOne', visualType: 'numberLine',
+    rangeForTier: tier => tier === 1 ? [2, 10] : tier === 2 ? [2, 20] : [10, 30],
+    build: a => ({ prompt: `${a} - 1 = ?`, a, correctAnswer: a - 1 })
+  },
+  {
+    id: 'number_bonds_to_10', microSkillId: 'bonds_to_10_missing_addend', label: 'Number bonds to 10',
+    explanationType: 'bond10', visualType: 'tenFrame',
+    rangeForTier: () => [1, 9],
+    build: a => ({ prompt: `${a} + __ = 10`, a, correctAnswer: 10 - a })
+  },
+  {
+    id: 'number_bonds_to_20', microSkillId: 'bonds_to_20_missing_addend', label: 'Number bonds to 20',
+    explanationType: 'bond20', visualType: 'tenFrame', minTier: 3,
+    rangeForTier: () => [1, 19],
+    build: a => ({ prompt: `${a} + __ = 20`, a, correctAnswer: 20 - a })
+  },
+  {
+    id: 'read_oclock', microSkillId: 'identify_oclock_analogue', label: "Reading o'clock",
+    explanationType: 'oclock', visualType: 'clock',
+    rangeForTier: () => [1, 12],
+    build: hour => ({ prompt: `Which clock shows ${hour} o'clock?`, a: hour, correctAnswer: `${hour}:00`, choiceType: 'clock' })
+  },
+  {
+    id: 'read_half_past', microSkillId: 'identify_half_past_analogue', label: 'Reading half past',
+    explanationType: 'halfPast', visualType: 'clock', minTier: 2,
+    rangeForTier: () => [1, 12],
+    build: hour => ({ prompt: `Which clock shows half past ${hour}?`, a: hour, correctAnswer: `${hour}:30`, choiceType: 'clock' })
+  }
+];
+function eligibleSkills(profile) {
+  const level = profile.microLevel || 1;
+  return SKILL_DEFS.filter(s => !s.minTier || level >= s.minTier);
 }
-function withoutRecentRepeats(candidates, buildPrompt, recent) {
-  const fresh = candidates.filter(c => !recent.has(buildPrompt(c)));
-  return fresh.length ? fresh : candidates;
+function skillLabelForMicroId(microId) {
+  return SKILL_DEFS.find(s => s.microSkillId === microId)?.label || microId;
 }
-function generateLesson(profile) {
-  const levels = skillLevelsOf(profile);
-  const recent = recentPrompts(profile);
-  const items = [];
-  const addCfg = ADD_LEVELS[Math.min(4, Math.max(1, levels.add || 1))];
-  const addPairs = shuffle(addCfg.addends.flatMap(addend => {
-    const [lo, hi] = addCfg.range;
-    return Array.from({ length: hi - lo + 1 }, (_, i) => ({ a: lo + i, addend }));
-  }));
-  const freshAddPairs = withoutRecentRepeats(addPairs, p => `${p.a} + ${p.addend} = ?`, recent).slice(0, 6);
-  freshAddPairs.forEach((p, idx) => {
-    const correctAnswer = p.a + p.addend;
-    items.push({
-      id: `q-add-${idx}-${p.a}-${p.addend}`,
-      type: idx % 3 === 1 ? 'choice' : 'keypad',
-      skillId: 'add_one_more',
-      microSkillId: addCfg.addends.length > 1 ? 'add_2_3_within_10' : (addCfg.range[1] > 9 ? 'add_within_20' : 'add_1_within_10'),
-      prompt: `${p.a} + ${p.addend} = ?`,
-      a: p.a,
-      addend: p.addend,
-      correctAnswer,
-      choices: distractorChoices(correctAnswer, [p.a, correctAnswer, Math.min(correctAnswer + 1, correctAnswer + p.addend), correctAnswer - 1], 0, Math.max(20, correctAnswer + 2)),
-      explanationType: 'addOne',
-      visualType: 'numberLine'
-    });
-  });
-  const bondCfg = BOND_LEVELS[Math.min(4, Math.max(1, levels.bonds || 1))];
-  const freshBondValues = withoutRecentRepeats(bondCfg.range, a => `${a} + __ = ${bondCfg.target}`, recent);
-  shuffle(freshBondValues).slice(0, 3).forEach((a, idx) => {
-    const correctAnswer = bondCfg.target - a;
-    items.push({
-      id: `q-bond-${idx}-${a}-${bondCfg.target}`,
-      type: idx === 1 ? 'choice' : 'keypad',
-      skillId: 'number_bonds_to_10',
-      microSkillId: bondCfg.target === 20 ? 'bonds_to_20_missing_addend' : 'bonds_to_10_missing_addend',
-      prompt: `${a} + __ = ${bondCfg.target}`,
-      a,
-      target: bondCfg.target,
-      correctAnswer,
-      choices: distractorChoices(correctAnswer, [correctAnswer, a, bondCfg.target, Math.abs(bondCfg.target - (a + 1))], 0, bondCfg.target),
-      explanationType: 'bond10',
-      visualType: 'tenFrame'
-    });
-  });
-  const clockLevel = levels.clock || 1;
-  const hourPool = clockLevel === 1 ? [3, 6, 9, 12] : Array.from({ length: 12 }, (_, i) => i + 1);
-  const freshHours = withoutRecentRepeats(hourPool, h => `Which clock shows ${h} o'clock?`, recent);
-  const hour = shuffle(freshHours)[0];
-  items.push({
-    id: `q-time-${hour}-${Date.now()}`,
-    type: 'choice',
-    skillId: 'read_oclock',
-    microSkillId: 'identify_oclock_analogue',
-    prompt: `Which clock shows ${hour} o'clock?`,
-    correctAnswer: `${hour}:00`,
-    choices: shuffle([`${hour}:00`, `${(hour % 12) + 1}:00`, `${hour}:30`]),
-    explanationType: 'oclock',
-    visualType: 'clock'
-  });
-  return shuffle(items).slice(0, 10);
+function clampTier(t) { return Math.max(1, Math.min(4, t || 1)); }
+function randomInt(min, max) { return min + Math.floor(Math.random() * (max - min + 1)); }
+function clockChoices(correct) {
+  const [h] = correct.split(':').map(Number);
+  const candidates = [correct, `${h}:00`, `${h}:30`, `${(h % 12) + 1}:00`, `${(h % 12) + 1}:30`].filter(unique);
+  return shuffle(candidates.slice(0, 3));
+}
+function buildQuestion(skillDef, a, tier) {
+  const built = skillDef.build(a, tier);
+  const [min, max] = skillDef.rangeForTier(tier);
+  const choices = built.choiceType === 'clock'
+    ? clockChoices(built.correctAnswer)
+    : distractorChoices(built.correctAnswer, [built.correctAnswer, built.a ?? a, built.correctAnswer + 1, built.correctAnswer - 1], Math.min(0, min - 5), max + 5);
+  return {
+    id: `q-${skillDef.id}-${Date.now()}-${Math.round(Math.random() * 1000)}`,
+    type: built.choiceType === 'clock' ? 'choice' : (Math.random() < 0.55 ? 'keypad' : 'choice'),
+    skillId: skillDef.id,
+    microSkillId: skillDef.microSkillId,
+    tier,
+    prompt: built.prompt,
+    a: built.a ?? a,
+    correctAnswer: built.correctAnswer,
+    choices,
+    explanationType: skillDef.explanationType,
+    visualType: skillDef.visualType
+  };
+}
+// Picks the next skill (prioritising anything flagged as shaky from the
+// previous session for the first few questions), looks up that skill's
+// current in-lesson difficulty tier, and builds a fresh randomised
+// question for it.
+function generateNextQuestion(session, profile) {
+  const skills = eligibleSkills(profile);
+  const priorityIds = (profile.reviewSkillIds || []).filter(id => skills.some(s => s.id === id));
+  let skillDef;
+  if (priorityIds.length && session.index < Math.min(4, priorityIds.length * 2)) {
+    skillDef = skills.find(s => s.id === priorityIds[session.index % priorityIds.length]);
+  }
+  if (!skillDef) {
+    skillDef = skills[(session.index + session.skillCursor) % skills.length];
+  }
+  const tier = session.tierBySkill[skillDef.id] || clampTier(profile.skillTiers?.[skillDef.id] || profile.microLevel || 1);
+  session.tierBySkill[skillDef.id] = tier;
+  const [min, max] = skillDef.rangeForTier(tier);
+  const a = randomInt(min, max);
+  return buildQuestion(skillDef, a, tier);
+}
+// After each answer: two correct in a row on a skill nudges that skill's
+// difficulty up a tier (looking for where understanding actually breaks);
+// one wrong answer drops it back down a tier straight away.
+function updateAdaptive(session, q, isCorrect) {
+  const streak = (session.streakBySkill[q.skillId] || 0) + (isCorrect ? 1 : 0);
+  if (isCorrect && streak >= 2) {
+    session.tierBySkill[q.skillId] = clampTier((session.tierBySkill[q.skillId] || 1) + 1);
+    session.streakBySkill[q.skillId] = 0;
+  } else if (!isCorrect) {
+    session.tierBySkill[q.skillId] = clampTier((session.tierBySkill[q.skillId] || 1) - 1);
+    session.streakBySkill[q.skillId] = 0;
+  } else {
+    session.streakBySkill[q.skillId] = streak;
+  }
 }
 function unique(value, index, arr) { return arr.indexOf(value) === index; }
 function shuffle(arr) { return [...arr].sort(() => Math.random() - 0.5); }
@@ -380,8 +387,11 @@ function distractorChoices(correctAnswer, candidates, min, max) {
 
 function lesson() {
   if (!lessonSession) return setRoute('home');
+  if (!lessonSession.questions[lessonSession.index]) {
+    if (lessonSession.index >= lessonSession.totalQuestions) return finishLesson();
+    lessonSession.questions[lessonSession.index] = generateNextQuestion(lessonSession, currentProfile());
+  }
   const q = lessonSession.questions[lessonSession.index];
-  if (!q) return finishLesson();
   const speakText = `${q.prompt.replace('__', 'blank')}`;
   shell(html`
     <div class="question-wrap">
@@ -397,7 +407,6 @@ function lesson() {
       <div class="question-actions">
         <button class="secondary" data-hint>Hint</button>
         <button class="ghost" data-route="home">Stop</button>
-        <button class="primary ok-button" data-ok>OK</button>
       </div>
     </div>
   `);
@@ -406,32 +415,30 @@ function lesson() {
 
 function renderQuestionInput(q) {
   if (q.type === 'choice') {
-    return `<div class="choices">${q.choices.map(choice => `<button class="choice${String(choice) === String(lessonSession.selectedChoice) ? ' selected' : ''}" data-choice="${choice}">${formatChoice(q, choice)}</button>`).join('')}</div>`;
+    return `<div class="choices">${q.choices.map(choice => `<button class="choice" data-choice="${choice}">${formatChoice(q, choice)}</button>`).join('')}</div>`;
   }
   return html`
     <div class="answer-box" aria-label="Answer box">${lessonSession.keypad || '&nbsp;'}</div>
     <div class="keypad">
       ${[1,2,3,4,5,6,7,8,9].map(n => `<button class="key" data-key="${n}">${n}</button>`).join('')}
-      <button class="key" data-key="0">0</button><button class="key wide" data-delete>delete</button>
+      <button class="key" data-key="0">0</button><button class="key wide" data-delete aria-label="Backspace, remove last digit">⌫ Backspace</button>
     </div>
+    <button class="primary cta-large ok-button" data-ok>OK</button>
   `;
 }
 function formatChoice(q, choice) {
-  // Showing the digital time under the clock face would hand the child the
-  // answer to "which clock shows X o'clock" without them reading the dial,
-  // so the aria-label carries the time for assistive tech only.
-  if (q.visualType === 'clock') return `<span aria-label="${choice}">${clockSvg(choice)}</span>`;
+  if (q.visualType === 'clock') return `<span aria-label="${choice}">${clockSvg(choice)}</span><br><span class="small">${choice}</span>`;
   return escapeText(choice);
 }
 function bindQuestion(q) {
   document.querySelector('[data-hint]').addEventListener('click', () => { lessonSession.hintOpen = true; render(); });
   document.querySelectorAll('[data-key]').forEach(btn => btn.addEventListener('click', () => { lessonSession.keypad = (lessonSession.keypad + btn.dataset.key).slice(0, 2); render(); }));
   document.querySelector('[data-delete]')?.addEventListener('click', () => { lessonSession.keypad = lessonSession.keypad.slice(0, -1); render(); });
-  document.querySelector('[data-ok]')?.addEventListener('click', () => submitAnswer(q, q.type === 'choice' ? lessonSession.selectedChoice : lessonSession.keypad));
-  document.querySelectorAll('[data-choice]').forEach(btn => btn.addEventListener('click', () => { lessonSession.selectedChoice = btn.dataset.choice; render(); }));
+  document.querySelector('[data-ok]')?.addEventListener('click', () => submitAnswer(q, lessonSession.keypad));
+  document.querySelectorAll('[data-choice]').forEach(btn => btn.addEventListener('click', () => submitAnswer(q, btn.dataset.choice)));
 }
 function submitAnswer(q, rawAnswer) {
-  if (rawAnswer === '' || rawAnswer === null || rawAnswer === undefined) return;
+  if (rawAnswer === '') return;
   const elapsedMs = Math.round(performance.now() - lessonSession.questionStartedAt);
   const normalised = q.type === 'keypad' ? Number(rawAnswer) : rawAnswer;
   const isCorrect = String(normalised) === String(q.correctAnswer);
@@ -455,11 +462,12 @@ function submitAnswer(q, rawAnswer) {
   };
   lessonSession.answers.push(attempt);
   state.attempts.push(attempt);
+  state.syncQueue.push({ type: 'attempt', payload: attempt });
+  updateAdaptive(lessonSession, q, isCorrect);
   saveState();
   if (cloudUser) saveAttemptCloud(cloudUser.uid, attempt).catch(() => {});
   lessonSession.index += 1;
   lessonSession.keypad = '';
-  lessonSession.selectedChoice = null;
   lessonSession.hintOpen = false;
   lessonSession.questionStartedAt = performance.now();
   render();
@@ -467,16 +475,25 @@ function submitAnswer(q, rawAnswer) {
 function diagnose(q, answer) {
   const a = q.a;
   const correctAnswer = q.correctAnswer;
+  const numAnswer = Number(answer);
   if (q.skillId === 'add_one_more') {
-    const childAnswer = Number(answer);
-    const addend = q.addend || 1;
-    if (childAnswer === a) return { tag: 'did_not_add' };
-    if (childAnswer === a - 1) return { tag: 'counted_backwards_instead_of_forwards' };
-    if (childAnswer === a + addend + 1) return { tag: 'counted_on_too_far' };
-    if (childAnswer === (q.target || 10) && correctAnswer !== (q.target || 10)) return { tag: 'number_bond_confusion' };
+    if (numAnswer === a) return { tag: 'did_not_add' };
+    if (numAnswer === a - 1) return { tag: 'counted_backwards_instead_of_forwards' };
+    if (numAnswer === a + 2) return { tag: 'counted_on_too_far' };
+    if (numAnswer === 10 && correctAnswer !== 10) return { tag: 'number_bond_confusion' };
   }
-  if (q.skillId === 'number_bonds_to_10' && Number(answer) === a + (q.target || 10)) return { tag: 'added_instead_of_missing' };
+  if (q.skillId === 'add_two_more') {
+    if (numAnswer === a + 1) return { tag: 'counted_on_too_few' };
+    if (numAnswer === a) return { tag: 'did_not_add' };
+  }
+  if (q.skillId === 'subtract_one') {
+    if (numAnswer === a) return { tag: 'did_not_subtract' };
+    if (numAnswer === a + 1) return { tag: 'counted_forwards_instead_of_back' };
+  }
+  if (q.skillId === 'number_bonds_to_10' && numAnswer === a + 10) return { tag: 'added_instead_of_missing' };
+  if (q.skillId === 'number_bonds_to_20' && numAnswer === a + 20) return { tag: 'added_instead_of_missing' };
   if (q.skillId === 'read_oclock' && String(answer).endsWith(':30')) return { tag: 'confused_oclock_and_half_past' };
+  if (q.skillId === 'read_half_past' && String(answer).endsWith(':00')) return { tag: 'confused_half_past_and_oclock' };
   return null;
 }
 
@@ -486,6 +503,7 @@ function finishLesson() {
   const correct = answers.filter(a => a.isCorrect).length;
   const summary = {
     id: lessonSession.id,
+    lessonNumber: lessonSession.lessonNumber,
     childId: profile.id,
     childName: profile.name,
     startedAt: lessonSession.startedAt,
@@ -493,98 +511,78 @@ function finishLesson() {
     total: answers.length,
     correct,
     accuracy: answers.length ? correct / answers.length : 0,
-    reviewCount: selectReviewItems(answers).length
+    reviewCount: answers.filter(a => !a.isCorrect).length
   };
   updateMastery(profile, answers, summary.accuracy);
+  // Carry difficulty progress forward, and flag whichever skills broke down
+  // this session so next lesson retests them early rather than starting
+  // from scratch every time.
+  profile.skillTiers = { ...(profile.skillTiers || {}), ...lessonSession.tierBySkill };
+  profile.reviewSkillIds = [...new Set(answers.filter(a => !a.isCorrect).map(a => a.skillId))];
   state.lessonSummaries.push(summary);
+  state.syncQueue.push({ type: 'lessonSummary', payload: summary });
   saveState();
   if (cloudUser) {
     saveLessonSummaryCloud(cloudUser.uid, summary).catch(() => {});
     saveChildCloud(cloudUser.uid, profile).catch(() => {});
   }
-  setRoute('complete', { lessonId: lessonSession.id });
+  setRoute('results');
 }
 function updateMastery(profile, answers, accuracy) {
-  const levels = skillLevelsOf(profile);
   const bySkill = groupBy(answers, 'microSkillId');
-  // Group by skill family (add/bonds/clock) too, since a level-up decision
-  // needs to look across all microskills feeding that family, not just one.
-  const byGroup = {};
   Object.entries(bySkill).forEach(([skill, skillAnswers]) => {
     const skillAccuracy = skillAnswers.filter(a => a.isCorrect).length / skillAnswers.length;
     const current = profile.mastery[skill] || 0;
     const delta = skillAccuracy >= 0.9 ? 0.12 : skillAccuracy >= 0.8 ? 0.06 : skillAccuracy >= 0.6 ? 0.01 : -0.04;
     profile.mastery[skill] = Math.max(0, Math.min(1, current + delta));
-    const group = SKILL_GROUP_FOR_MICROSKILL[skill];
-    if (group) (byGroup[group] ||= []).push(...skillAnswers);
   });
-  Object.entries(byGroup).forEach(([group, groupAnswers]) => {
-    const groupAccuracy = groupAnswers.filter(a => a.isCorrect).length / groupAnswers.length;
-    const correctAnswers = groupAnswers.filter(a => a.isCorrect);
-    const avgElapsed = correctAnswers.length ? correctAnswers.reduce((sum, a) => sum + a.elapsedMs, 0) / correctAnswers.length : Infinity;
-    const fast = avgElapsed < FAST_MS_BY_GROUP[group];
-    const current = levels[group] || 1;
-    // A child who is both accurate AND quick has clearly mastered this level
-    // with ease, so jump two levels rather than one - that's the "got it
-    // right and fast, give them something harder" behaviour that was missing.
-    let next = current;
-    if (groupAccuracy >= 0.9 && fast) next = current + 2;
-    else if (groupAccuracy >= 0.8) next = current + 1;
-    else if (groupAccuracy < 0.5) next = current - 1;
-    levels[group] = Math.max(1, Math.min(4, next));
-  });
-  promoteStageIfMastered(profile, accuracy);
-}
-// Skill levels only run 1-4, so once every group hits the ceiling the level
-// label was stuck at e.g. "R-5" forever - there was no path from "maxed out
-// at this year group" to the next one. If all three groups have hit the
-// ceiling and this lesson was also done well, graduate to the next year
-// group and reset skill levels to 1, so the next lesson starts at "1-1"
-// instead of going nowhere.
-function promoteStageIfMastered(profile, accuracy) {
-  const levels = skillLevelsOf(profile);
-  const maxed = levels.add >= 4 && levels.bonds >= 4 && levels.clock >= 4;
-  if (!maxed || accuracy < 0.85) return;
-  const stageIdx = YEAR_GROUP_OPTIONS.indexOf(profile.stage);
-  if (stageIdx === -1 || stageIdx >= YEAR_GROUP_OPTIONS.length - 1) return;
-  profile.stage = YEAR_GROUP_OPTIONS[stageIdx + 1];
-  profile.skillLevels = { add: 1, bonds: 1, clock: 1 };
+  if (accuracy >= 0.9) profile.microLevel = Math.min(4, (profile.microLevel || 1) + 1);
+  if (accuracy < 0.6) profile.microLevel = Math.max(1, (profile.microLevel || 1) - 1);
 }
 function groupBy(items, key) { return items.reduce((acc, item) => ((acc[item[key]] ||= []).push(item), acc), {}); }
 
-function complete() {
+function results() {
+  const answers = lessonSession?.answers || [];
+  const correctCount = answers.filter(a => a.isCorrect).length;
+  const allCorrect = answers.length > 0 && correctCount === answers.length;
+  const bySkill = groupBy(answers, 'skillId');
+  const breakdown = Object.entries(bySkill).map(([skillId, list]) => {
+    const skillCorrect = list.filter(a => a.isCorrect).length;
+    return { skillId, label: SKILL_DEFS.find(s => s.id === skillId)?.label || skillId, total: list.length, correct: skillCorrect, wrong: list.length - skillCorrect };
+  });
   shell(html`
-    <div class="question-main">
-      <h1>Well done!</h1>
-      <p>You finished today's lesson. You practised adding one more and number bonds.</p>
-      <button class="primary cta-large" data-route="reviewIntro">Let's review</button>
+    <div class="question-main" style="text-align:left; align-items:stretch">
+      <h1 style="text-align:center">${allCorrect ? 'Amazing — all correct!' : 'Lesson complete!'}</h1>
+      <p style="text-align:center">${correctCount} out of ${answers.length} correct overall.</p>
+      <div class="grid stat-grid" style="margin-bottom:8px">
+        ${breakdown.map(b => `
+          <div class="stat-card">
+            <strong>${b.correct}/${b.total}</strong>
+            <span>${escapeText(b.label)}</span>
+            <p class="small" style="margin:6px 0 0">${b.wrong ? `${b.wrong} wrong` : 'All correct'}</p>
+          </div>`).join('')}
+      </div>
+      <p style="text-align:center">Tap any question below to see it explained — the crosses are the best ones to look at together.</p>
+      <div class="grid results-list">
+        ${answers.map((a, i) => `
+          <button class="result-row ${a.isCorrect ? 'correct' : 'wrong'}" data-review="${i}">
+            <span class="result-icon">${a.isCorrect ? '✓' : '✗'}</span>
+            <span class="result-prompt">${escapeText(a.prompt)}<br><span class="small">Your answer: ${escapeText(a.childAnswer)}</span></span>
+          </button>`).join('')}
+      </div>
+      <button class="primary cta-large" data-route="celebration">Finish</button>
     </div>
   `);
-}
-function selectReviewItems(answers) {
-  return [...answers]
-    .sort((a, b) => Number(a.isCorrect) - Number(b.isCorrect) || Number(b.usedHint) - Number(a.usedHint) || b.elapsedMs - a.elapsedMs)
-    .filter((a, idx) => !a.isCorrect || a.usedHint || a.elapsedMs > 12000 || idx < 2)
-    .slice(0, 5);
-}
-function reviewIntro() {
-  const items = selectReviewItems(lessonSession?.answers || []);
-  shell(html`
-    <div class="question-main">
-      <h1>Let's look at what we learned.</h1>
-      <p>We will review ${items.length || 1} question${items.length === 1 ? '' : 's'} together.</p>
-      <button class="primary cta-large" data-start-review>Start Review</button>
-    </div>
-  `);
-  document.querySelector('[data-start-review]').addEventListener('click', () => setRoute('review', { reviewIndex: 0 }));
+  document.querySelectorAll('[data-review]').forEach(btn => btn.addEventListener('click', () => setRoute('review', { reviewIndex: Number(btn.dataset.review) })));
 }
 function review() {
-  const items = selectReviewItems(lessonSession?.answers || []);
-  const item = items[route.reviewIndex || 0];
-  if (!item) return setRoute('celebration');
+  const items = lessonSession?.answers || [];
+  const idx = route.reviewIndex || 0;
+  const item = items[idx];
+  if (!item) return setRoute('results');
   const explanation = explain(item);
   shell(html`
-    <div class="top-row"><h3>Review ${(route.reviewIndex || 0) + 1} of ${items.length}</h3><button class="secondary" data-speak="${escapeText(explanation)}">Hear</button></div>
+    <div class="top-row"><h3>Question ${idx + 1} of ${items.length}</h3><button class="secondary" data-speak="${escapeText(explanation)}">Hear</button></div>
     <div class="question-main">
       <div class="review-box">
         <h2>Question: ${escapeText(item.prompt)}</h2>
@@ -598,15 +596,13 @@ function review() {
         ${renderVisual(item)}
       </div>
       <div class="question-actions">
+        <button class="ghost" data-route="results">Back to summary</button>
         <button class="secondary" data-try>Try one like this</button>
-        <button class="primary" data-next-review>${(route.reviewIndex || 0) + 1 >= items.length ? 'Finish review' : 'Next'}</button>
       </div>
     </div>
   `);
-  document.querySelector('[data-next-review]').addEventListener('click', () => setRoute('review', { reviewIndex: (route.reviewIndex || 0) + 1 }));
   document.querySelector('[data-try]').addEventListener('click', () => {
-    const q = similarQuestion(item.question);
-    lessonSession.questions.splice(lessonSession.index, 0, q);
+    lessonSession.questions[lessonSession.index] = similarQuestion(item.question);
     setRoute('lesson');
   });
 }
@@ -618,47 +614,60 @@ function explain(item) {
     if (item.misconceptionTag === 'did_not_add') extra = ` You may have stopped at the starting number. Remember to count one step on.`;
     if (item.misconceptionTag === 'counted_backwards_instead_of_forwards') extra = ` You may have counted backwards. Adding one means count forwards.`;
     if (item.misconceptionTag === 'counted_on_too_far') extra = ` You may have counted on two steps. This question only asks for one more.`;
-    const addend = q.addend || 1;
-    return `${q.a} + ${addend} means ${addend} more than ${q.a}. Count on: ${q.a}, ${Array.from({ length: addend }, (_, i) => q.a + i + 1).join(', ')}. The answer is ${q.a + addend}.${extra}`;
+    return `${q.a} + 1 means one more than ${q.a}. Count on one step: ${q.a}, ${q.a + 1}. The answer is ${q.a + 1}.${extra}`;
   }
-  if (q.explanationType === 'bond10') {
-    const target = q.target || 10;
-    return `A number bond to ${target} is a pair that makes ${target}. Start with ${q.a}, then count up to ${target}. ${q.a} needs ${target - q.a} more, so the answer is ${target - q.a}.`;
+  if (q.explanationType === 'addTwo') {
+    let extra = '';
+    if (item.misconceptionTag === 'counted_on_too_few') extra = ` You may have counted on only one step. This time we need two.`;
+    if (item.misconceptionTag === 'did_not_add') extra = ` You may have stopped at the starting number.`;
+    return `${q.a} + 2 means two more than ${q.a}. Count on two steps: ${q.a}, ${q.a + 1}, ${q.a + 2}. The answer is ${q.a + 2}.${extra}`;
   }
+  if (q.explanationType === 'subtractOne') {
+    let extra = '';
+    if (item.misconceptionTag === 'counted_forwards_instead_of_back') extra = ` You may have counted forwards instead of backwards.`;
+    if (item.misconceptionTag === 'did_not_subtract') extra = ` You may have stayed at the starting number.`;
+    return `${q.a} - 1 means one less than ${q.a}. Count back one step: ${q.a}, ${q.a - 1}. The answer is ${q.a - 1}.${extra}`;
+  }
+  if (q.explanationType === 'bond10') return `A number bond to 10 is a pair that makes 10. Start with ${q.a}, then count up to 10. ${q.a} needs ${10 - q.a} more, so the answer is ${10 - q.a}.`;
+  if (q.explanationType === 'bond20') return `A number bond to 20 is a pair that makes 20. Start with ${q.a}, then count up to 20. ${q.a} needs ${20 - q.a} more, so the answer is ${20 - q.a}.`;
   if (q.explanationType === 'oclock') return `For an o'clock time, the long minute hand points to 12. The short hour hand points to the hour. ${q.correctAnswer} means ${q.correctAnswer.split(':')[0]} o'clock.`;
+  if (q.explanationType === 'halfPast') return `For half past, the long minute hand points to 6, and the short hour hand sits halfway between two numbers. ${q.correctAnswer} means half past ${q.correctAnswer.split(':')[0]}.`;
   return `The correct answer is ${item.correctAnswer}.`;
 }
 function renderVisual(item) {
   const q = item.question;
   if (q.visualType === 'numberLine') {
-    const lineLength = Math.max(11, q.correctAnswer + 1);
-    return `<div class="visual-line"><strong>Show me</strong><div class="number-line">${Array.from({ length: lineLength }, (_, n) => `<span class="tick ${n === q.a || n === q.correctAnswer ? 'active' : ''}"><span>${n}</span><span class="mark"></span></span>`).join('')}</div><p class="small">Start at ${q.a}, then jump ${q.addend || 1} step${(q.addend || 1) === 1 ? '' : 's'} to ${q.correctAnswer}.</p></div>`;
+    const steps = Math.abs(q.correctAnswer - q.a);
+    const dir = q.correctAnswer > q.a ? 'on' : 'back';
+    const lineMax = Math.max(q.a, q.correctAnswer, 10);
+    return `<div class="visual-line"><strong>Show me</strong><div class="number-line">${Array.from({ length: lineMax + 1 }, (_, n) => `<span class="tick ${n === q.a || n === q.correctAnswer ? 'active' : ''}"><span>${n}</span><span class="mark"></span></span>`).join('')}</div><p class="small">Start at ${q.a}, then count ${dir} ${steps} step${steps === 1 ? '' : 's'} to ${q.correctAnswer}.</p></div>`;
   }
   if (q.visualType === 'tenFrame') {
-    const target = q.target || 10;
-    return `<div class="visual-line"><strong>Show me</strong><p>${q.a} counters are already there. Fill ${target - q.a} empty spaces to make ${target}.</p><div class="progress-dots">${Array.from({ length: target }, (_, i) => `<span class="dot ${i < q.a ? 'done' : ''}"></span>`).join('')}</div></div>`;
+    const total = q.skillId === 'number_bonds_to_20' ? 20 : 10;
+    return `<div class="visual-line"><strong>Show me</strong><p>${q.a} counters are already there. Fill ${total - q.a} empty spaces to make ${total}.</p><div class="progress-dots">${Array.from({ length: total }, (_, i) => `<span class="dot ${i < q.a ? 'done' : ''}"></span>`).join('')}</div></div>`;
   }
   if (q.visualType === 'clock') return `<div class="visual-line"><strong>Show me</strong><div>${clockSvg(q.correctAnswer, 150)}</div></div>`;
   return '';
 }
+// Builds a fresh question for the same skill, one notch easier than the
+// one just got wrong, so the retry is a genuine stepping stone rather than
+// the exact same question again.
 function similarQuestion(q) {
-  if (q.explanationType === 'bond10') {
-    const target = q.target || 10;
-    const a = Math.max(1, Math.min(target - 1, q.a > target / 2 ? q.a - 1 : q.a + 1));
-    return { ...q, id: `try-${Date.now()}`, prompt: `${a} + __ = ${target}`, a, target, correctAnswer: target - a, choices: distractorChoices(target - a, [target - a, a, target], 0, target), type: 'choice' };
-  }
-  const addend = q.addend || 1;
-  const a = Math.max(1, Math.min(9, q.a - 1));
-  return { ...q, id: `try-${Date.now()}`, prompt: `${a} + ${addend} = ?`, a, addend, correctAnswer: a + addend, choices: distractorChoices(a + addend, [a, a + addend, Math.min(20, a + addend + 1)], 0, 20), type: 'choice' };
+  const skillDef = SKILL_DEFS.find(s => s.id === q.skillId);
+  if (!skillDef) return q;
+  const tier = q.tier || 1;
+  const [min, max] = skillDef.rangeForTier(tier);
+  const a = Math.max(min, Math.min(max, (q.a ?? min) - 1));
+  return buildQuestion(skillDef, a, tier);
 }
 function celebration() {
   const profile = currentProfile();
   const latest = state.lessonSummaries[state.lessonSummaries.length - 1];
-  const next = latest?.accuracy >= 0.9 ? 'Next time: a slightly harder set of one more questions.' : latest?.accuracy >= 0.8 ? 'Next time: more practice at this level.' : 'Next time: a repair lesson with extra visual help.';
+  const next = latest?.accuracy >= 0.9 ? 'Next time: a harder set of questions.' : latest?.accuracy >= 0.8 ? 'Next time: more practice at this level.' : 'Next time: a repair lesson with extra visual help, focused on what tripped you up.';
   shell(html`
     <div class="question-main">
       <h1>Great learning!</h1>
-      <p>${escapeText(profile.name)}, you practised one more, counting on and number bonds.</p>
+      <p>${escapeText(profile.name)}, you finished lesson ${latest?.lessonNumber || ''}.</p>
       <div class="next-box"><h3>${next}</h3><p>The parent dashboard has been updated. Lessons are saved on this device and will sync when online.</p></div>
       <button class="primary cta-large" data-route="home">Finish</button>
     </div>
@@ -680,73 +689,41 @@ function parentGate() {
     else document.querySelector('#pin-error').textContent = 'That PIN did not match.';
   });
 }
-function profileFormFields(prefix, values) {
-  return html`
-    <div class="add-child-form">
-      <div class="form-field">
-        <label class="small" for="${prefix}-name">Name</label>
-        <input class="text-input" id="${prefix}-name" placeholder="Name" maxlength="24" value="${escapeText(values.name || '')}">
-      </div>
-      <div class="form-field">
-        <label class="small">Avatar</label>
-        <div class="avatar-picker" id="${prefix}-avatar-picker">
-          ${AVATAR_OPTIONS.map(a => `<button type="button" class="avatar-option${a === values.avatar ? ' selected' : ''}" data-avatar="${a}">${a}</button>`).join('')}
-        </div>
-      </div>
-      <div class="form-field">
-        <label class="small" for="${prefix}-stage">Year group</label>
-        <select class="text-input" id="${prefix}-stage">
-          ${YEAR_GROUP_OPTIONS.map(s => `<option value="${s}" ${s === values.stage ? 'selected' : ''}>${s}</option>`).join('')}
-        </select>
-      </div>
-    </div>
-  `;
-}
-function editProfileCard(p) {
-  return `
-    <div class="stat-card">
-      <strong class="small">Edit profile</strong>
-      ${profileFormFields(`edit-${p.id}`, p)}
-      <div class="nav" style="margin-top:10px">
-        <button class="ghost" data-cancel-edit>Cancel</button>
-        <button class="primary" data-save-profile="${p.id}">Save</button>
-      </div>
-    </div>`;
-}
 function parentDashboard() {
   const summaries = [...state.lessonSummaries].reverse();
   const mistakes = [...state.attempts].filter(a => !a.isCorrect || a.usedHint).slice(-12).reverse();
   shell(html`
-    <div class="top-row"><div><h1>Parent Dashboard</h1><p>Progress, recent mistakes, mastery and offline sync status.</p></div><div class="nav"><button class="ghost" data-route="profiles">Child mode</button><button class="secondary" data-refresh>Refresh content</button>${cloudUser ? '<button class="ghost" data-signout>Sign out</button>' : ''}</div></div>
+    <div class="top-row"><div><h1>Parent Dashboard</h1><p>Progress, recent mistakes, mastery and offline sync status.</p></div><div class="nav"><button class="ghost" data-route="profiles">Child mode</button><button class="secondary" data-refresh>Refresh content</button><button class="primary" data-sync>Sync now</button>${cloudUser ? '<button class="ghost" data-signout>Sign out</button>' : ''}</div></div>
     <div class="grid dashboard">
       <div class="dashboard-card">
         <h2>Children</h2>
         ${cloudUser ? `<p class="small">Signed in as ${escapeText(cloudUser.email)}. Children, lessons and attempts sync automatically across any device signed in to this account.</p>` : ''}
         <div class="grid stat-grid">
-          ${state.profiles.map(p => p.id === editingProfileId ? editProfileCard(p) : `
+          ${state.profiles.map(p => `
             <div class="stat-card">
               <strong>${p.avatar} ${escapeText(p.name)}</strong><span>${escapeText(p.stage)}</span>
-              <p><span class="badge level-badge">Level ${levelLabel(p)}</span></p>
-              <p class="small">Add one: ${Math.round((p.mastery.add_1_within_10 || 0) * 100)}%, Bonds: ${Math.round((p.mastery.bonds_to_10_missing_addend || 0) * 100)}%</p>
-              <div class="nav">
-                <button class="secondary" data-edit-profile="${p.id}">Edit</button>
-                <button class="danger" data-remove-profile="${p.id}" ${state.profiles.length <= 1 ? 'disabled' : ''}>Remove</button>
-              </div>
+              <p class="small">${Object.keys(p.mastery || {}).length ? Object.entries(p.mastery).map(([id, v]) => `${escapeText(skillLabelForMicroId(id))}: ${Math.round((v || 0) * 100)}%`).join(', ') : 'No lessons yet'}</p>
+              <button class="danger" data-remove-profile="${p.id}" ${state.profiles.length <= 1 ? 'disabled' : ''}>Remove</button>
             </div>`).join('')}
         </div>
         <h3 style="margin-top:22px">Add a child</h3>
-        ${profileFormFields('new-child', { avatar: AVATAR_OPTIONS[0], stage: YEAR_GROUP_OPTIONS[0] })}
-        <button class="primary" data-add-profile style="margin-top:14px">Add child</button>
+        <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); align-items:end">
+          <label class="small">Name<input class="answer-box" id="new-child-name" placeholder="Name" maxlength="24"></label>
+          <label class="small">Avatar<input class="answer-box" id="new-child-avatar" placeholder="🐧" maxlength="2" value="🐧"></label>
+          <label class="small">Stage<input class="answer-box" id="new-child-stage" placeholder="Reception into Year 1" maxlength="40"></label>
+          <button class="primary" data-add-profile>Add child</button>
+        </div>
         <p class="small" id="add-child-error"></p>
       </div>
       <div class="dashboard-card">
         <h2>Offline and sync</h2>
         <p>${statusPill()} <span class="badge">Content v${state.contentVersion}</span></p>
-        <p class="small">${cloudUser ? 'Cross-device sync is on for this account - changes save automatically, no action needed.' : 'Cross-device sync is not set up, so progress only lives on this device.'}</p>
+        <p>${state.syncQueue.length} item${state.syncQueue.length === 1 ? '' : 's'} waiting to sync.</p>
+        <p class="small">${cloudUser ? 'Cross-device sync is on for this account.' : 'Cross-device sync is not set up, so progress only lives on this device.'}</p>
       </div>
       <div class="dashboard-card">
         <h2>Lesson history</h2>
-        ${summaries.length ? `<table class="table"><thead><tr><th>Date</th><th>Child</th><th>Accuracy</th><th>Review</th></tr></thead><tbody>${summaries.map(s => `<tr><td>${new Date(s.completedAt).toLocaleDateString('en-GB')}</td><td>${escapeText(s.childName)}</td><td>${Math.round(s.accuracy * 100)}%</td><td>${s.reviewCount} items</td></tr>`).join('')}</tbody></table>` : '<p>No completed lessons yet.</p>'}
+        ${summaries.length ? `<table class="table"><thead><tr><th>Lesson</th><th>Date</th><th>Child</th><th>Accuracy</th><th>Wrong</th></tr></thead><tbody>${summaries.map(s => `<tr><td>${s.lessonNumber || '—'}</td><td>${new Date(s.completedAt).toLocaleDateString('en-GB')}</td><td>${escapeText(s.childName)}</td><td>${Math.round(s.accuracy * 100)}%</td><td>${s.reviewCount} items</td></tr>`).join('')}</tbody></table>` : '<p>No completed lessons yet.</p>'}
       </div>
       <div class="dashboard-card">
         <h2>Recent mistakes and hints</h2>
@@ -754,8 +731,9 @@ function parentDashboard() {
       </div>
     </div>
   `);
+  document.querySelector('[data-sync]').addEventListener('click', () => { state.syncQueue = []; saveState(); render(); });
   document.querySelector('[data-refresh]').addEventListener('click', () => { state.contentVersion += 1; saveState(); render(); });
-  document.querySelector('[data-signout]')?.addEventListener('click', () => signOutParent());
+  document.querySelector('[data-signout]')?.addEventListener('click', () => { signOutParent().catch(() => {}); });
   document.querySelectorAll('[data-remove-profile]').forEach(btn => btn.addEventListener('click', () => {
     if (state.profiles.length <= 1) return;
     const id = btn.dataset.removeProfile;
@@ -765,14 +743,10 @@ function parentDashboard() {
     if (cloudUser) deleteChildCloud(cloudUser.uid, id).catch(() => {});
     render();
   }));
-  document.querySelectorAll('.avatar-option').forEach(btn => btn.addEventListener('click', () => {
-    btn.closest('.avatar-picker').querySelectorAll('.avatar-option').forEach(b => b.classList.remove('selected'));
-    btn.classList.add('selected');
-  }));
   document.querySelector('[data-add-profile]').addEventListener('click', () => {
     const name = document.querySelector('#new-child-name').value.trim();
-    const avatar = document.querySelector('#new-child-avatar-picker .avatar-option.selected')?.dataset.avatar || AVATAR_OPTIONS[0];
-    const stage = document.querySelector('#new-child-stage').value;
+    const avatar = document.querySelector('#new-child-avatar').value.trim() || '🐧';
+    const stage = document.querySelector('#new-child-stage').value.trim() || 'Reception into Year 1';
     const errorEl = document.querySelector('#add-child-error');
     if (!name) { errorEl.textContent = 'Please enter a name.'; return; }
     const newProfile = {
@@ -780,7 +754,7 @@ function parentDashboard() {
       name,
       avatar,
       stage,
-      skillLevels: { add: 1, bonds: 1, clock: 1 },
+      microLevel: 1,
       mastery: {}
     };
     state.profiles.push(newProfile);
@@ -788,42 +762,29 @@ function parentDashboard() {
     if (cloudUser) saveChildCloud(cloudUser.uid, newProfile).catch(() => {});
     render();
   });
-  document.querySelectorAll('[data-edit-profile]').forEach(btn => btn.addEventListener('click', () => {
-    editingProfileId = btn.dataset.editProfile;
-    render();
-  }));
-  document.querySelectorAll('[data-cancel-edit]').forEach(btn => btn.addEventListener('click', () => {
-    editingProfileId = null;
-    render();
-  }));
-  document.querySelectorAll('[data-save-profile]').forEach(btn => btn.addEventListener('click', () => {
-    const id = btn.dataset.saveProfile;
-    const profile = state.profiles.find(p => p.id === id);
-    const prefix = `edit-${id}`;
-    const name = document.querySelector(`#${prefix}-name`).value.trim();
-    if (!name) return;
-    profile.name = name;
-    profile.avatar = document.querySelector(`#${prefix}-avatar-picker .avatar-option.selected`)?.dataset.avatar || profile.avatar;
-    profile.stage = document.querySelector(`#${prefix}-stage`).value;
-    editingProfileId = null;
-    saveState();
-    if (cloudUser) saveChildCloud(cloudUser.uid, profile).catch(() => {});
-    render();
-  }));
 }
 function labelMistake(tag, usedHint) {
-  if (tag === 'did_not_add') return 'May not have added one';
+  if (tag === 'did_not_add') return 'May not have added on';
   if (tag === 'counted_backwards_instead_of_forwards') return 'May have counted backwards';
-  if (tag === 'counted_on_too_far') return 'May have counted too far';
+  if (tag === 'counted_on_too_far') return 'May have counted on too far';
+  if (tag === 'counted_on_too_few') return 'May have counted on too few steps';
+  if (tag === 'did_not_subtract') return 'May not have counted back';
+  if (tag === 'counted_forwards_instead_of_back') return 'May have counted forwards instead of back';
   if (tag === 'number_bond_confusion') return 'May be thinking about making 10';
+  if (tag === 'added_instead_of_missing') return 'May have added instead of finding the missing part';
   if (tag === 'confused_oclock_and_half_past') return 'May confuse o’clock and half past';
+  if (tag === 'confused_half_past_and_oclock') return 'May confuse half past and o’clock';
   if (usedHint) return 'Used hint';
   return 'Needs review';
 }
 function hintFor(q) {
-  if (q.explanationType === 'addOne') return `Start at ${q.a}, then count on ${q.addend || 1} step${(q.addend || 1) === 1 ? '' : 's'}.`;
-  if (q.explanationType === 'bond10') return `Think: how many more does ${q.a} need to reach ${q.target || 10}?`;
+  if (q.explanationType === 'addOne') return `Start at ${q.a}, then count one more step.`;
+  if (q.explanationType === 'addTwo') return `Start at ${q.a}, then count on two steps.`;
+  if (q.explanationType === 'subtractOne') return `Start at ${q.a}, then count back one step.`;
+  if (q.explanationType === 'bond10') return `Think: how many more does ${q.a} need to reach 10?`;
+  if (q.explanationType === 'bond20') return `Think: how many more does ${q.a} need to reach 20?`;
   if (q.explanationType === 'oclock') return `For o'clock, the long hand points to 12.`;
+  if (q.explanationType === 'halfPast') return `For half past, the long hand points to 6.`;
   return 'Have a careful look and try your best.';
 }
 function clockSvg(value, size = 112) {
