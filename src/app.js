@@ -211,7 +211,7 @@ function home() {
     <h3>Progress</h3>
     <p class="small">${completedCount} lesson${completedCount === 1 ? '' : 's'} completed so far.</p>
     <div class="grid stat-grid" style="margin-top:12px">
-      ${masteryEntries.length ? masteryEntries.map(([id, v]) => `<div class="stat-card"><strong>${Math.round((v || 0) * 100)}%</strong><span>${escapeText(skillLabelForMicroId(id))}</span></div>`).join('') : '<div class="stat-card"><strong>—</strong><span>No lessons yet</span></div>'}
+      ${masteryEntries.length ? masteryEntries.map(([id, v]) => `<div class="stat-card"><strong>${skillScore(profile.id, id).label}</strong><span>${escapeText(skillLabelForMicroId(id))}</span></div>`).join('') : '<div class="stat-card"><strong>—</strong><span>No lessons yet</span></div>'}
       <div class="stat-card"><strong>${state.syncQueue.length}</strong><span>Items to sync</span></div>
     </div>
   `);
@@ -264,23 +264,52 @@ function startLesson() {
 // a skill then adapt up/down *during* a lesson based on streaks (see
 // generateNextQuestion/updateAdaptive), so a child who's flying through
 // easy questions gets pushed harder until something actually trips them up.
+const MAX_TIER = 8;
+const CLOCK_WORDS = { 5: 'five', 10: 'ten', 15: 'quarter', 20: 'twenty', 25: 'twenty-five', 30: 'half' };
+const NUMBER_WORDS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen'];
+const TENS_WORDS = { 20: 'twenty', 30: 'thirty', 40: 'forty', 50: 'fifty' };
+function minuteWord(n) {
+  if (CLOCK_WORDS[n]) return CLOCK_WORDS[n];
+  if (n < 20) return NUMBER_WORDS[n];
+  const tens = Math.floor(n / 10) * 10;
+  const ones = n % 10;
+  return ones ? `${TENS_WORDS[tens]}-${NUMBER_WORDS[ones]}` : TENS_WORDS[tens];
+}
+function skillPassed(profile, skillId, microSkillId, minTier = 4, minMastery = 0.82) {
+  return (profile.skillTiers?.[skillId] || 0) >= minTier || (profile.mastery?.[microSkillId] || 0) >= minMastery;
+}
+function skillScore(childId, microSkillId) {
+  const attempts = state.attempts.filter(a => a.childId === childId && a.microSkillId === microSkillId);
+  const correct = attempts.filter(a => a.isCorrect).length;
+  return { correct, total: attempts.length, label: attempts.length ? `${correct}/${attempts.length}` : '0/0' };
+}
+const SHAPES = [
+  { name: 'triangle', sides: 3, corners: 3 }, { name: 'square', sides: 4, corners: 4 },
+  { name: 'rectangle', sides: 4, corners: 4 }, { name: 'pentagon', sides: 5, corners: 5 },
+  { name: 'hexagon', sides: 6, corners: 6 }, { name: 'circle', sides: 0, corners: 0 }
+];
+const COINS = [1, 2, 5, 10, 20, 50, 100, 200];
+const PATTERNS = [
+  ['circle', 'square'], ['triangle', 'circle', 'circle'], ['red', 'blue'], ['2', '4', '6'], ['5', '10', '15']
+];
+
 const SKILL_DEFS = [
   {
     id: 'add_one_more', microSkillId: 'add_1_within_10', label: 'Adding one more',
     explanationType: 'addOne', visualType: 'numberLine',
-    rangeForTier: tier => tier === 1 ? [1, 5] : tier === 2 ? [1, 9] : tier === 3 ? [10, 19] : [10, 30],
+    rangeForTier: tier => tier <= 1 ? [1, 5] : tier <= 2 ? [1, 9] : tier <= 4 ? [10, 19] : [10, 50],
     build: a => ({ prompt: `${a} + 1 = ?`, a, correctAnswer: a + 1 })
   },
   {
     id: 'add_two_more', microSkillId: 'add_2_within_20', label: 'Adding two more',
     explanationType: 'addTwo', visualType: 'numberLine',
-    rangeForTier: tier => tier === 1 ? [1, 7] : tier === 2 ? [1, 18] : tier === 3 ? [10, 28] : [10, 38],
+    rangeForTier: tier => tier <= 1 ? [1, 7] : tier <= 2 ? [1, 18] : tier <= 4 ? [10, 28] : [10, 60],
     build: a => ({ prompt: `${a} + 2 = ?`, a, correctAnswer: a + 2 })
   },
   {
     id: 'subtract_one', microSkillId: 'subtract_1_within_20', label: 'Counting back one',
     explanationType: 'subtractOne', visualType: 'numberLine',
-    rangeForTier: tier => tier === 1 ? [2, 10] : tier === 2 ? [2, 20] : [10, 30],
+    rangeForTier: tier => tier <= 1 ? [2, 10] : tier <= 2 ? [2, 20] : [10, 60],
     build: a => ({ prompt: `${a} - 1 = ?`, a, correctAnswer: a - 1 })
   },
   {
@@ -297,49 +326,196 @@ const SKILL_DEFS = [
   },
   {
     id: 'read_oclock', microSkillId: 'identify_oclock_analogue', label: "Reading o'clock",
-    explanationType: 'oclock', visualType: 'clock',
+    explanationType: 'oclock', visualType: 'clock', clockSkill: true,
     rangeForTier: () => [1, 12],
     build: hour => ({ prompt: `Which clock shows ${hour} o'clock?`, a: hour, correctAnswer: `${hour}:00`, choiceType: 'clock' })
   },
   {
     id: 'read_half_past', microSkillId: 'identify_half_past_analogue', label: 'Reading half past',
-    explanationType: 'halfPast', visualType: 'clock', minTier: 2,
+    explanationType: 'halfPast', visualType: 'clock', minTier: 1, clockSkill: true,
     rangeForTier: () => [1, 12],
     build: hour => ({ prompt: `Which clock shows half past ${hour}?`, a: hour, correctAnswer: `${hour}:30`, choiceType: 'clock' })
+  },
+  {
+    id: 'read_quarter_hours', microSkillId: 'identify_quarter_hour_analogue', label: 'Reading quarter past and quarter to',
+    explanationType: 'quarterHour', visualType: 'clock', minTier: 2, clockSkill: true,
+    rangeForTier: () => [1, 12],
+    build: hour => {
+      const past = Math.random() < 0.5;
+      const answerHour = past ? hour : ((hour + 10) % 12) + 1;
+      const correctAnswer = `${answerHour}:${past ? '15' : '45'}`;
+      return { prompt: `Which clock shows quarter ${past ? 'past' : 'to'} ${hour}?`, a: hour, correctAnswer, choiceType: 'clock', minutePrecision: true };
+    }
+  },
+  {
+    id: 'read_five_minute_intervals', microSkillId: 'identify_five_minute_analogue', label: 'Reading five-minute times',
+    explanationType: 'fiveMinuteClock', visualType: 'clock', minTier: 2, clockSkill: true,
+    rangeForTier: () => [1, 12],
+    build: hour => {
+      const minutes = [5, 10, 20, 25, 35, 40, 50, 55][randomInt(0, 7)];
+      const past = minutes < 30;
+      const shownHour = past ? hour : ((hour % 12) + 1);
+      const correctAnswer = `${hour}:${String(minutes).padStart(2, '0')}`;
+      const phrase = past ? `${CLOCK_WORDS[minutes]} past ${hour}` : `${CLOCK_WORDS[60 - minutes]} to ${shownHour}`;
+      return { prompt: `Which clock shows ${phrase}?`, a: hour, correctAnswer, choiceType: 'clock', minutePrecision: true };
+    }
+  },
+  {
+    id: 'read_one_minute_intervals', microSkillId: 'identify_one_minute_analogue', label: 'Reading one-minute times',
+    explanationType: 'oneMinuteClock', visualType: 'clock', minTier: 4, clockSkill: true, requiresSkill: 'read_five_minute_intervals', requiresMicroSkill: 'identify_five_minute_analogue',
+    rangeForTier: () => [1, 12],
+    build: hour => {
+      let minutes = randomInt(1, 59);
+      if (minutes % 5 === 0) minutes = minutes === 59 ? 58 : minutes + 1;
+      const past = minutes <= 30;
+      const shownHour = past ? hour : ((hour % 12) + 1);
+      const correctAnswer = `${hour}:${String(minutes).padStart(2, '0')}`;
+      const phrase = past ? `${minuteWord(minutes)} past ${hour}` : `${minuteWord(60 - minutes)} to ${shownHour}`;
+      return { prompt: `Which clock shows ${phrase}?`, a: hour, correctAnswer, choiceType: 'clock', minutePrecision: true, exactMinute: true };
+    }
+  },
+  {
+    id: 'place_value_tens_ones', microSkillId: 'place_value_tens_ones', label: 'Tens and ones',
+    explanationType: 'placeValue', visualType: 'placeValue', minTier: 2,
+    rangeForTier: tier => tier <= 3 ? [11, 49] : tier <= 5 ? [20, 99] : [100, 999],
+    build: n => ({ prompt: 'What number is shown?', a: n, correctAnswer: n, visualData: { number: n } })
+  },
+  {
+    id: 'bar_model_word_problems', microSkillId: 'bar_model_add_subtract', label: 'Bar model word problems',
+    explanationType: 'barModel', visualType: 'barModel', minTier: 2,
+    rangeForTier: tier => tier <= 3 ? [4, 14] : [10, 60],
+    build: (a, tier) => {
+      const b = randomInt(2, tier <= 3 ? 8 : 35);
+      const add = Math.random() < 0.6;
+      if (add) return { prompt: `Tom has ${a} stickers. He gets ${b} more. How many stickers does he have now?`, a, b, correctAnswer: a + b, visualData: { model: 'partWhole', known: a, unknown: b, total: a + b } };
+      const total = a + b;
+      return { prompt: `Maya has ${total} shells. She gives away ${b}. How many shells are left?`, a: total, b, correctAnswer: a, visualData: { model: 'partWhole', known: b, unknown: a, total } };
+    }
+  },
+  {
+    id: 'fractions_visual', microSkillId: 'fractions_shaded_shapes', label: 'Fractions of shapes',
+    explanationType: 'fractionShape', visualType: 'fractionShape', minTier: 3,
+    rangeForTier: tier => tier <= 4 ? [2, 4] : tier <= 6 ? [2, 8] : [2, 12],
+    build: denom => {
+      const shaded = randomInt(1, denom - 1);
+      return { prompt: 'What fraction is shaded?', a: shaded, correctAnswer: `${shaded}/${denom}`, choiceType: 'fraction', visualData: { shaded, denom } };
+    }
+  },
+  {
+    id: 'shape_geometry', microSkillId: 'identify_2d_shapes', label: 'Shapes and corners',
+    explanationType: 'shape', visualType: 'shape', minTier: 2,
+    rangeForTier: () => [0, SHAPES.length - 1],
+    build: idx => {
+      const shape = SHAPES[idx];
+      const askSides = Math.random() < 0.45 && shape.name !== 'circle';
+      return { prompt: askSides ? `How many sides does this ${shape.name} have?` : 'What shape is this?', a: idx, correctAnswer: askSides ? shape.sides : shape.name, choiceType: askSides ? 'numericChoice' : 'shape', visualData: { shape: shape.name, sides: shape.sides, corners: shape.corners, askSides } };
+    }
+  },
+  {
+    id: 'measurement_compare', microSkillId: 'compare_measurement_lengths', label: 'Measurement and comparison',
+    explanationType: 'measurement', visualType: 'measurement', minTier: 2,
+    rangeForTier: () => [4, 15],
+    build: a => {
+      let b = randomInt(4, 15); if (b === a) b += 2;
+      return { prompt: 'Which bar is longer?', a, b, correctAnswer: a > b ? 'A' : 'B', choiceType: 'compare', visualData: { a, b } };
+    }
+  },
+  {
+    id: 'uk_money_total', microSkillId: 'uk_coin_totals', label: 'UK coin totals',
+    explanationType: 'money', visualType: 'money', minTier: 3,
+    rangeForTier: tier => tier <= 4 ? [2, 4] : tier <= 6 ? [3, 6] : [4, 8],
+    build: count => {
+      const usable = COINS.slice(0, count <= 4 ? 5 : 8);
+      const coins = Array.from({ length: count }, () => usable[randomInt(0, usable.length - 1)]);
+      const total = coins.reduce((sum, coin) => sum + coin, 0);
+      return { prompt: 'How much money is this?', a: total, correctAnswer: total, choiceType: 'numericChoice', visualData: { coins } };
+    }
+  },
+  {
+    id: 'patterns_sequences', microSkillId: 'patterns_sequences_missing', label: 'Patterns and sequences',
+    explanationType: 'pattern', visualType: 'pattern', minTier: 2,
+    rangeForTier: () => [0, PATTERNS.length - 1],
+    build: idx => {
+      const base = PATTERNS[idx];
+      const sequence = Array.from({ length: 6 }, (_, i) => base[i % base.length]);
+      const missingIndex = randomInt(2, 5);
+      const correctAnswer = sequence[missingIndex];
+      return { prompt: 'What goes in the missing place?', a: idx, correctAnswer, choiceType: 'pattern', visualData: { sequence, missingIndex } };
+    }
   }
 ];
 function eligibleSkills(profile) {
   const level = profile.microLevel || 1;
-  return SKILL_DEFS.filter(s => !s.minTier || level >= s.minTier);
+  return SKILL_DEFS.filter(s => {
+    if (s.requiresSkill && !skillPassed(profile, s.requiresSkill, s.requiresMicroSkill)) return false;
+    if (s.clockSkill) return !s.minTier || (profile.skillTiers?.[s.id] || level) >= s.minTier;
+    return !s.minTier || level >= s.minTier;
+  });
 }
 function skillLabelForMicroId(microId) {
   return SKILL_DEFS.find(s => s.microSkillId === microId)?.label || microId;
 }
-function clampTier(t) { return Math.max(1, Math.min(4, t || 1)); }
+function clampTier(t) { return Math.max(1, Math.min(MAX_TIER, t || 1)); }
 function randomInt(min, max) { return min + Math.floor(Math.random() * (max - min + 1)); }
-function clockChoices(correct) {
-  const [h] = correct.split(':').map(Number);
-  const candidates = [correct, `${h}:00`, `${h}:30`, `${(h % 12) + 1}:00`, `${(h % 12) + 1}:30`].filter(unique);
-  return shuffle(candidates.slice(0, 3));
+function normaliseClock(value) {
+  const [hRaw, mRaw = 0] = String(value).split(':').map(Number);
+  const h = ((hRaw - 1 + 12) % 12) + 1;
+  const m = ((mRaw % 60) + 60) % 60;
+  return `${h}:${String(m).padStart(2, '0')}`;
+}
+function clockChoices(correct, exactMinute = false) {
+  const [h, m] = correct.split(':').map(Number);
+  const step = exactMinute ? 1 : 5;
+  const candidates = [correct, normaliseClock(`${h}:${m + step}`), normaliseClock(`${h}:${m - step}`), normaliseClock(`${h}:${m + 5}`), normaliseClock(`${h}:${m - 5}`), normaliseClock(`${(h % 12) + 1}:${m}`), normaliseClock(`${h === 1 ? 12 : h - 1}:${m}`)];
+  return topUpChoices(candidates, () => normaliseClock(`${randomInt(1, 12)}:${String(exactMinute ? randomInt(1, 59) : randomInt(0, 11) * 5).padStart(2, '0')}`));
+}
+function fractionChoices(correct) {
+  const [n, d] = correct.split('/').map(Number);
+  return topUpChoices([correct, `${Math.max(1, n - 1)}/${d}`, `${Math.min(d - 1, n + 1)}/${d}`, `${n}/${Math.max(2, d + 1)}`, `${d - n}/${d}`], () => `${randomInt(1, 3)}/${randomInt(2, 6)}`);
+}
+function shapeChoices(correct) { return topUpChoices([correct, 'triangle', 'square', 'rectangle', 'pentagon', 'hexagon', 'circle'], () => SHAPES[randomInt(0, SHAPES.length - 1)].name); }
+function compareChoices(correct) { return topUpChoices([correct, correct === 'A' ? 'B' : 'A', 'same'], () => ['A', 'B', 'same'][randomInt(0, 2)]); }
+function patternChoices(correct) { return topUpChoices([correct, 'circle', 'square', 'triangle', 'red', 'blue', '2', '4', '6', '10', '15'], () => String(randomInt(1, 20))); }
+function topUpChoices(candidates, makeCandidate) {
+  const set = candidates.map(String).filter(unique);
+  let guard = 0;
+  while (set.length < 3 && guard < 30) {
+    const candidate = String(makeCandidate());
+    if (!set.includes(candidate)) set.push(candidate);
+    guard += 1;
+  }
+  return shuffle(set.slice(0, 3));
+}
+function choicesForBuiltQuestion(built, skillDef, min, max) {
+  if (built.choiceType === 'clock') return clockChoices(built.correctAnswer, !!built.exactMinute);
+  if (built.choiceType === 'fraction') return fractionChoices(built.correctAnswer);
+  if (built.choiceType === 'shape') return shapeChoices(built.correctAnswer);
+  if (built.choiceType === 'compare') return compareChoices(built.correctAnswer);
+  if (built.choiceType === 'pattern') return patternChoices(built.correctAnswer);
+  if (built.choiceType === 'numericChoice') return distractorChoices(Number(built.correctAnswer), [Number(built.correctAnswer), Number(built.correctAnswer) + 1, Number(built.correctAnswer) - 1, Number(built.correctAnswer) + 2], 0, 250);
+  return distractorChoices(built.correctAnswer, [built.correctAnswer, built.a ?? min, Number(built.correctAnswer) + 1, Number(built.correctAnswer) - 1], Math.min(0, min - 5), max + 8);
 }
 function buildQuestion(skillDef, a, tier) {
   const built = skillDef.build(a, tier);
   const [min, max] = skillDef.rangeForTier(tier);
-  const choices = built.choiceType === 'clock'
-    ? clockChoices(built.correctAnswer)
-    : distractorChoices(built.correctAnswer, [built.correctAnswer, built.a ?? a, built.correctAnswer + 1, built.correctAnswer - 1], Math.min(0, min - 5), max + 5);
+  const choices = choicesForBuiltQuestion(built, skillDef, min, max);
+  const alwaysChoice = ['clock', 'fraction', 'shape', 'compare', 'pattern', 'numericChoice'].includes(built.choiceType);
   return {
     id: `q-${skillDef.id}-${Date.now()}-${Math.round(Math.random() * 1000)}`,
-    type: built.choiceType === 'clock' ? 'choice' : (Math.random() < 0.55 ? 'keypad' : 'choice'),
+    type: alwaysChoice ? 'choice' : (Math.random() < 0.55 ? 'keypad' : 'choice'),
     skillId: skillDef.id,
     microSkillId: skillDef.microSkillId,
     tier,
     prompt: built.prompt,
     a: built.a ?? a,
+    b: built.b,
     correctAnswer: built.correctAnswer,
     choices,
     explanationType: skillDef.explanationType,
-    visualType: skillDef.visualType
+    visualType: skillDef.visualType,
+    visualData: built.visualData || null,
+    minutePrecision: !!built.minutePrecision,
+    exactMinute: !!built.exactMinute
   };
 }
 // Picks the next skill (prioritising anything flagged as shaky from the
@@ -412,6 +588,7 @@ function lesson() {
       </div>
       <div class="question-main">
         <div class="prompt">${escapeText(q.prompt)}</div>
+        ${renderQuestionVisual(q)}
         ${renderQuestionInput(q)}
         ${lessonSession.hintOpen ? `<div class="hint-box">${hintFor(q)}</div>` : ''}
       </div>
@@ -424,21 +601,30 @@ function lesson() {
   bindQuestion(q);
 }
 
+function renderQuestionVisual(q) {
+  if (!['barModel', 'fractionShape', 'shape', 'measurement', 'money', 'placeValue', 'pattern'].includes(q.visualType)) return '';
+  return renderVisual({ question: q, correctAnswer: q.correctAnswer, childAnswer: '' });
+}
+
 function renderQuestionInput(q) {
   if (q.type === 'choice') {
-    return `<div class="choices">${q.choices.map(choice => `<button class="choice" data-choice="${choice}">${formatChoice(q, choice)}</button>`).join('')}</div>`;
+    return `<div class="response-layout choice-layout"><div class="choices">${q.choices.map(choice => `<button class="choice ${q.minutePrecision ? 'minute-choice' : ''}" data-choice="${escapeText(choice)}">${formatChoice(q, choice)}</button>`).join('')}</div></div>`;
   }
   return html`
-    <div class="answer-box" aria-label="Answer box">${lessonSession.keypad || '&nbsp;'}</div>
-    <div class="keypad">
-      ${[1,2,3,4,5,6,7,8,9].map(n => `<button class="key" data-key="${n}">${n}</button>`).join('')}
-      <button class="key" data-key="0">0</button><button class="key wide" data-delete aria-label="Backspace, remove last digit">⌫ Backspace</button>
+    <div class="response-layout">
+      <div class="keypad-panel">
+        <div class="answer-box" aria-label="Answer box">${lessonSession.keypad || '&nbsp;'}</div>
+        <div class="keypad">
+          ${[1,2,3,4,5,6,7,8,9].map(n => `<button class="key" data-key="${n}">${n}</button>`).join('')}
+          <button class="key" data-key="0">0</button><button class="key wide" data-delete aria-label="Backspace, remove last digit">⌫ Backspace</button>
+        </div>
+      </div>
+      <button class="primary ok-button" data-ok>OK</button>
     </div>
-    <button class="primary cta-large ok-button" data-ok>OK</button>
   `;
 }
 function formatChoice(q, choice) {
-  if (q.visualType === 'clock') return `<span aria-label="${choice}">${clockSvg(choice)}</span><br><span class="small">${choice}</span>`;
+  if (q.visualType === 'clock') return `<span aria-label="${choice}">${clockSvg(choice, q.minutePrecision ? 210 : 132)}</span><br><span class="small">${choice}</span>`;
   return escapeText(choice);
 }
 function bindQuestion(q) {
@@ -505,6 +691,9 @@ function diagnose(q, answer) {
   if (q.skillId === 'number_bonds_to_20' && numAnswer === a + 20) return { tag: 'added_instead_of_missing' };
   if (q.skillId === 'read_oclock' && String(answer).endsWith(':30')) return { tag: 'confused_oclock_and_half_past' };
   if (q.skillId === 'read_half_past' && String(answer).endsWith(':00')) return { tag: 'confused_half_past_and_oclock' };
+  if (q.visualType === 'clock' && String(answer).split(':')[1] !== String(q.correctAnswer).split(':')[1]) return { tag: 'clock_minute_hand' };
+  if (q.visualType === 'money' && numAnswer < Number(correctAnswer)) return { tag: 'coin_total_low' };
+  if (q.visualType === 'placeValue' && !Number.isNaN(numAnswer) && Math.abs(numAnswer - Number(correctAnswer)) % 9 === 0) return { tag: 'tens_ones_swapped' };
   return null;
 }
 
@@ -547,7 +736,7 @@ function updateMastery(profile, answers, accuracy) {
     const delta = skillAccuracy >= 0.9 ? 0.12 : skillAccuracy >= 0.8 ? 0.06 : skillAccuracy >= 0.6 ? 0.01 : -0.04;
     profile.mastery[skill] = Math.max(0, Math.min(1, current + delta));
   });
-  if (accuracy >= 0.9) profile.microLevel = Math.min(4, (profile.microLevel || 1) + 1);
+  if (accuracy >= 0.9) profile.microLevel = Math.min(MAX_TIER, (profile.microLevel || 1) + 1);
   if (accuracy < 0.6) profile.microLevel = Math.max(1, (profile.microLevel || 1) - 1);
 }
 function groupBy(items, key) { return items.reduce((acc, item) => ((acc[item[key]] ||= []).push(item), acc), {}); }
@@ -574,12 +763,12 @@ function results() {
             <p class="small" style="margin:6px 0 0">${b.wrong ? `${b.wrong} wrong` : 'All correct'}</p>
           </div>`).join('')}
       </div>
-      <p style="text-align:center">Tap any question below to see it explained — the crosses are the best ones to look at together.</p>
-      <div class="grid results-list">
+      <p style="text-align:center">Tap a box to open the explanation. Green means correct, red means it needs review.</p>
+      <div class="review-tile-grid" aria-label="Question review grid">
         ${answers.map((a, i) => `
-          <button class="result-row ${a.isCorrect ? 'correct' : 'wrong'}" data-review="${i}">
-            <span class="result-icon">${a.isCorrect ? '✓' : '✗'}</span>
-            <span class="result-prompt">${escapeText(a.prompt)}<br><span class="small">Your answer: ${escapeText(a.childAnswer)}</span></span>
+          <button class="review-tile ${a.isCorrect ? 'correct' : 'wrong'}" data-review="${i}" aria-label="Question ${i + 1}, ${a.isCorrect ? 'correct' : 'wrong'}">
+            <span class="review-tile-number">${i + 1}</span>
+            <span class="review-tile-icon">${a.isCorrect ? '✓' : '✗'}</span>
           </button>`).join('')}
       </div>
       <button class="primary cta-large" data-route="celebration">Finish</button>
@@ -644,6 +833,16 @@ function explain(item) {
   if (q.explanationType === 'bond20') return `A number bond to 20 is a pair that makes 20. Start with ${q.a}, then count up to 20. ${q.a} needs ${20 - q.a} more, so the answer is ${20 - q.a}.`;
   if (q.explanationType === 'oclock') return `For an o'clock time, the long minute hand points to 12. The short hour hand points to the hour. ${q.correctAnswer} means ${q.correctAnswer.split(':')[0]} o'clock.`;
   if (q.explanationType === 'halfPast') return `For half past, the long minute hand points to 6, and the short hour hand sits halfway between two numbers. ${q.correctAnswer} means half past ${q.correctAnswer.split(':')[0]}.`;
+  if (q.explanationType === 'quarterHour') return `Quarter past means 15 minutes after the hour. Quarter to means 15 minutes before the next hour. Look for the long hand on 3 or 9, then check the short hand.`;
+  if (q.explanationType === 'fiveMinuteClock') return `Count round the clock in fives with the long hand. Each big number is 5 more minutes. The correct clock shows ${q.correctAnswer}.`;
+  if (q.explanationType === 'oneMinuteClock') return `Use the five-minute numbers first, then count the small tick marks one by one. The correct clock shows ${q.correctAnswer}.`;
+  if (q.explanationType === 'placeValue') return `${q.correctAnswer} has ${Math.floor(Number(q.correctAnswer) / 10)} tens and ${Number(q.correctAnswer) % 10} ones. Count the tens rods first, then the ones cubes.`;
+  if (q.explanationType === 'barModel') return `The bar model shows the whole amount split into parts. Use the known parts to find the missing part or total. The answer is ${item.correctAnswer}.`;
+  if (q.explanationType === 'fractionShape') return `A fraction tells us how many equal parts are shaded. Count the shaded parts, then count all equal parts. That gives ${item.correctAnswer}.`;
+  if (q.explanationType === 'shape') return `Look at the sides and corners carefully. The correct answer is ${item.correctAnswer}.`;
+  if (q.explanationType === 'measurement') return `Compare the two bars from the same starting line. The longer bar reaches further, so the answer is ${item.correctAnswer}.`;
+  if (q.explanationType === 'money') return `Add the coin values together. The total is ${item.correctAnswer}p.`;
+  if (q.explanationType === 'pattern') return `Find the repeating rule, then use the rule to fill the missing place. The answer is ${item.correctAnswer}.`;
   return `The correct answer is ${item.correctAnswer}.`;
 }
 function renderVisual(item) {
@@ -651,15 +850,54 @@ function renderVisual(item) {
   if (q.visualType === 'numberLine') {
     const steps = Math.abs(q.correctAnswer - q.a);
     const dir = q.correctAnswer > q.a ? 'on' : 'back';
-    const lineMax = Math.max(q.a, q.correctAnswer, 10);
+    const lineMax = Math.min(60, Math.max(q.a, q.correctAnswer, 10));
     return `<div class="visual-line"><strong>Show me</strong><div class="number-line">${Array.from({ length: lineMax + 1 }, (_, n) => `<span class="tick ${n === q.a || n === q.correctAnswer ? 'active' : ''}"><span>${n}</span><span class="mark"></span></span>`).join('')}</div><p class="small">Start at ${q.a}, then count ${dir} ${steps} step${steps === 1 ? '' : 's'} to ${q.correctAnswer}.</p></div>`;
   }
   if (q.visualType === 'tenFrame') {
     const total = q.skillId === 'number_bonds_to_20' ? 20 : 10;
     return `<div class="visual-line"><strong>Show me</strong><p>${q.a} counters are already there. Fill ${total - q.a} empty spaces to make ${total}.</p><div class="progress-dots">${Array.from({ length: total }, (_, i) => `<span class="dot ${i < q.a ? 'done' : ''}"></span>`).join('')}</div></div>`;
   }
-  if (q.visualType === 'clock') return `<div class="visual-line"><strong>Show me</strong><div>${clockSvg(q.correctAnswer, 150)}</div></div>`;
+  if (q.visualType === 'clock') return `<div class="visual-line"><strong>Show me</strong><div>${clockSvg(q.correctAnswer, q.minutePrecision ? 240 : 160)}</div></div>`;
+  if (q.visualType === 'barModel') return `<div class="visual-line"><strong>Bar model</strong>${barModelSvg(q.visualData)}</div>`;
+  if (q.visualType === 'fractionShape') return `<div class="visual-line"><strong>Fraction shape</strong>${fractionSvg(q.visualData)}</div>`;
+  if (q.visualType === 'shape') return `<div class="visual-line"><strong>Shape</strong>${shapeSvg(q.visualData?.shape || q.correctAnswer)}</div>`;
+  if (q.visualType === 'measurement') return `<div class="visual-line"><strong>Compare lengths</strong>${measurementSvg(q.visualData)}</div>`;
+  if (q.visualType === 'money') return `<div class="visual-line"><strong>UK coins</strong><div class="coin-row">${(q.visualData?.coins || []).map(coin => `<span class="coin">${coin >= 100 ? '£' + coin / 100 : coin + 'p'}</span>`).join('')}</div></div>`;
+  if (q.visualType === 'placeValue') return `<div class="visual-line"><strong>Tens and ones</strong>${placeValueSvg(q.visualData?.number || q.correctAnswer)}</div>`;
+  if (q.visualType === 'pattern') return `<div class="visual-line"><strong>Pattern</strong>${patternHtml(q.visualData)}</div>`;
   return '';
+}
+function barModelSvg(data = {}) {
+  const total = Math.max(1, data.total || (data.known || 0) + (data.unknown || 0));
+  const knownWidth = Math.max(18, Math.round((data.known || 1) / total * 320));
+  const unknownWidth = Math.max(18, 320 - knownWidth);
+  return `<svg class="bar-svg" viewBox="0 0 380 104" role="img" aria-label="Bar model"><rect x="30" y="24" width="${knownWidth}" height="42" rx="8"/><rect x="${30 + knownWidth}" y="24" width="${unknownWidth}" height="42" rx="8" class="unknown"/><text x="${30 + knownWidth / 2}" y="52">${data.known ?? ''}</text><text x="${30 + knownWidth + unknownWidth / 2}" y="52">?</text><text x="190" y="92">Total ${total}</text></svg>`;
+}
+function fractionSvg(data = {}) {
+  const denom = data.denom || 2;
+  const shaded = data.shaded || 1;
+  return `<div class="fraction-shape" style="--parts: ${denom}">${Array.from({ length: denom }, (_, i) => `<span class="fraction-part ${i < shaded ? 'shaded' : ''}"></span>`).join('')}</div>`;
+}
+function shapeSvg(name) {
+  const points = { triangle: '60,12 108,104 12,104', square: '20,20 100,20 100,100 20,100', rectangle: '12,32 108,32 108,88 12,88', pentagon: '60,10 108,46 90,108 30,108 12,46', hexagon: '34,14 86,14 112,60 86,106 34,106 8,60' };
+  if (name === 'circle') return `<svg class="shape-svg" viewBox="0 0 120 120"><circle cx="60" cy="60" r="45"/></svg>`;
+  return `<svg class="shape-svg" viewBox="0 0 120 120"><polygon points="${points[name] || points.triangle}"/></svg>`;
+}
+function measurementSvg(data = {}) {
+  const a = (data.a || 6) * 14;
+  const b = (data.b || 8) * 14;
+  return `<svg class="measure-svg" viewBox="0 0 260 110"><text x="8" y="32">A</text><rect x="36" y="14" width="${a}" height="28" rx="7"/><text x="8" y="82">B</text><rect x="36" y="64" width="${b}" height="28" rx="7" class="unknown"/>${Array.from({ length: 12 }, (_, i) => `<line x1="${36 + i * 18}" y1="96" x2="${36 + i * 18}" y2="104"/>`).join('')}</svg>`;
+}
+function placeValueSvg(number) {
+  const n = Number(number) || 0;
+  const hundreds = Math.floor(n / 100);
+  const tens = Math.floor((n % 100) / 10);
+  const ones = n % 10;
+  return `<div class="place-value">${hundreds ? `<div><strong>${hundreds} hundreds</strong><br>${Array.from({ length: hundreds }, () => '<span class="hundred-flat"></span>').join('')}</div>` : ''}<div><strong>${tens} tens</strong><br>${Array.from({ length: tens }, () => '<span class="ten-rod"></span>').join('')}</div><div><strong>${ones} ones</strong><br>${Array.from({ length: ones }, () => '<span class="one-cube"></span>').join('')}</div></div>`;
+}
+function patternHtml(data = {}) {
+  const sequence = data.sequence || [];
+  return `<div class="pattern-row">${sequence.map((item, i) => `<span class="pattern-item">${i === data.missingIndex ? '?' : escapeText(item)}</span>`).join('')}</div>`;
 }
 // Builds a fresh question for the same skill, one notch easier than the
 // one just got wrong, so the retry is a genuine stepping stone rather than
@@ -714,7 +952,7 @@ function parentDashboard() {
           ${state.profiles.map(p => `
             <div class="stat-card">
               <strong>${p.avatar} ${escapeText(p.name)}</strong><span>${escapeText(p.stage)}</span>
-              <p class="small">${Object.keys(p.mastery || {}).length ? Object.entries(p.mastery).map(([id, v]) => `${escapeText(skillLabelForMicroId(id))}: ${Math.round((v || 0) * 100)}%`).join(', ') : 'No lessons yet'}</p>
+              <p class="small">${Object.keys(p.mastery || {}).length ? Object.keys(p.mastery).map(id => `${escapeText(skillLabelForMicroId(id))}: ${skillScore(p.id, id).label}`).join(', ') : 'No lessons yet'}</p>
               <button class="danger" data-remove-profile="${p.id}" ${state.profiles.length <= 1 ? 'disabled' : ''}>Remove</button>
             </div>`).join('')}
         </div>
@@ -735,7 +973,7 @@ function parentDashboard() {
       </div>
       <div class="dashboard-card">
         <h2>Lesson history</h2>
-        ${summaries.length ? `<table class="table"><thead><tr><th>Lesson</th><th>Date</th><th>Child</th><th>Accuracy</th><th>Wrong</th></tr></thead><tbody>${summaries.map(s => `<tr><td>${s.lessonNumber || '—'}</td><td>${new Date(s.completedAt).toLocaleDateString('en-GB')}</td><td>${escapeText(s.childName)}</td><td>${Math.round(s.accuracy * 100)}%</td><td>${s.reviewCount} items</td></tr>`).join('')}</tbody></table>` : '<p>No completed lessons yet.</p>'}
+        ${summaries.length ? `<table class="table"><thead><tr><th>Lesson</th><th>Date</th><th>Child</th><th>Score</th><th>Wrong</th></tr></thead><tbody>${summaries.map(s => `<tr><td>${s.lessonNumber || '—'}</td><td>${new Date(s.completedAt).toLocaleDateString('en-GB')}</td><td>${escapeText(s.childName)}</td><td>${s.correct}/${s.total}</td><td>${s.reviewCount} items</td></tr>`).join('')}</tbody></table>` : '<p>No completed lessons yet.</p>'}
       </div>
       <div class="dashboard-card">
         <h2>Recent mistakes and hints</h2>
@@ -785,6 +1023,9 @@ function labelMistake(tag, usedHint) {
   if (tag === 'added_instead_of_missing') return 'May have added instead of finding the missing part';
   if (tag === 'confused_oclock_and_half_past') return 'May confuse o’clock and half past';
   if (tag === 'confused_half_past_and_oclock') return 'May confuse half past and o’clock';
+  if (tag === 'clock_minute_hand') return 'May need minute-hand practice';
+  if (tag === 'coin_total_low') return 'May have missed a coin';
+  if (tag === 'tens_ones_swapped') return 'May have swapped tens and ones';
   if (usedHint) return 'Used hint';
   return 'Needs review';
 }
@@ -796,17 +1037,35 @@ function hintFor(q) {
   if (q.explanationType === 'bond20') return `Think: how many more does ${q.a} need to reach 20?`;
   if (q.explanationType === 'oclock') return `For o'clock, the long hand points to 12.`;
   if (q.explanationType === 'halfPast') return `For half past, the long hand points to 6.`;
+  if (q.explanationType === 'quarterHour') return `Quarter past uses the 3. Quarter to uses the 9.`;
+  if (q.explanationType === 'fiveMinuteClock') return `Count the minute hand round in fives: 5, 10, 15, 20...`;
+  if (q.explanationType === 'oneMinuteClock') return `Find the nearest five-minute mark, then count the small ticks one by one.`;
+  if (q.explanationType === 'placeValue') return `Count tens first, then add the ones.`;
+  if (q.explanationType === 'barModel') return `Use the bar to see the parts and the whole.`;
+  if (q.explanationType === 'fractionShape') return `Count shaded parts over total equal parts.`;
+  if (q.explanationType === 'shape') return `Look at the number of sides and corners.`;
+  if (q.explanationType === 'measurement') return `Start both bars at the left and see which reaches further.`;
+  if (q.explanationType === 'money') return `Add each coin label together.`;
+  if (q.explanationType === 'pattern') return `Look for what repeats.`;
   return 'Have a careful look and try your best.';
 }
-function clockSvg(value, size = 112) {
+function clockSvg(value, size = 132) {
   const [hRaw, mRaw] = String(value).split(':').map(Number);
   const hour = ((hRaw % 12) + (mRaw || 0) / 60) * 30;
   const minute = (mRaw || 0) * 6;
+  const minuteTicks = Array.from({ length: 60 }, (_, i) => {
+    const a = i * Math.PI / 30;
+    const outer = 54;
+    const inner = i % 5 === 0 ? 48 : 51;
+    return `<line x1="${60 + Math.sin(a) * inner}" y1="${60 - Math.cos(a) * inner}" x2="${60 + Math.sin(a) * outer}" y2="${60 - Math.cos(a) * outer}" stroke="#536246" stroke-width="${i % 5 === 0 ? 1.6 : 0.7}"/>`;
+  }).join('');
   return `<svg width="${size}" height="${size}" viewBox="0 0 120 120" role="img" aria-label="Clock ${value}">
     <circle cx="60" cy="60" r="54" fill="#fffaf2" stroke="#536246" stroke-width="4"/>
-    ${[...Array(12)].map((_, i) => { const a = (i + 1) * Math.PI / 6; const x = 60 + Math.sin(a) * 42; const y = 60 - Math.cos(a) * 42; return `<text x="${x}" y="${y + 4}" text-anchor="middle" font-size="10" fill="#536246">${i + 1}</text>`; }).join('')}
-    <line x1="60" y1="60" x2="${60 + Math.sin(hour * Math.PI / 180) * 25}" y2="${60 - Math.cos(hour * Math.PI / 180) * 25}" stroke="#243029" stroke-width="6" stroke-linecap="round"/>
-    <line x1="60" y1="60" x2="${60 + Math.sin(minute * Math.PI / 180) * 38}" y2="${60 - Math.cos(minute * Math.PI / 180) * 38}" stroke="#6f805f" stroke-width="4" stroke-linecap="round"/>
+    ${minuteTicks}
+    ${[...Array(12)].map((_, i) => { const a = (i + 1) * Math.PI / 6; const x = 60 + Math.sin(a) * 40; const y = 60 - Math.cos(a) * 40; return `<text x="${x}" y="${y + 4}" text-anchor="middle" font-size="9" fill="#536246">${i + 1}</text>`; }).join('')}
+    <line x1="60" y1="60" x2="${60 + Math.sin(hour * Math.PI / 180) * 24}" y2="${60 - Math.cos(hour * Math.PI / 180) * 24}" stroke="#243029" stroke-width="6" stroke-linecap="round"/>
+    <line x1="60" y1="60" x2="${60 + Math.sin(minute * Math.PI / 180) * 42}" y2="${60 - Math.cos(minute * Math.PI / 180) * 42}" stroke="#6f805f" stroke-width="4" stroke-linecap="round"/>
     <circle cx="60" cy="60" r="4" fill="#243029"/>
   </svg>`;
 }
+

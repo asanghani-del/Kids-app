@@ -122,3 +122,90 @@ p { font-size: clamp(1.02rem, 1.6vw, 1.28rem); line-height: 1.5; color: var(--mu
   .question-actions { justify-content: center; }
   .nav { justify-content: flex-start; }
 }
+
+/* Round 3 layout and visual breadth */
+.question-wrap { min-height: min(580px, calc(100vh - 120px)); }
+.question-main { gap: clamp(10px, 1.8vh, 18px); }
+.response-layout {
+  width: min(720px, 100%);
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) minmax(132px, 180px);
+  gap: clamp(14px, 2vw, 26px);
+  align-items: stretch;
+  justify-content: center;
+}
+.choice-layout { display: block; width: min(860px, 100%); }
+.keypad-panel { display: grid; gap: 12px; justify-items: center; }
+.ok-button { width: 100%; min-height: 100%; min-width: 132px; font-size: clamp(1.5rem, 3vw, 2.4rem); margin: 0; }
+.choice.minute-choice { min-height: 250px; font-size: 1.1rem; }
+.visual-line { text-align: center; }
+.bar-svg, .measure-svg { width: min(420px, 100%); height: auto; }
+.bar-svg rect, .measure-svg rect, .shape-svg polygon, .shape-svg circle { fill: var(--cream); stroke: var(--sage-dark); stroke-width: 3; }
+.bar-svg rect.unknown, .measure-svg rect.unknown { fill: var(--blue); }
+.bar-svg text, .measure-svg text { fill: var(--ink); font-weight: 800; font-size: 14px; text-anchor: middle; }
+.measure-svg text { text-anchor: start; }
+.measure-svg line { stroke: #c4bcae; stroke-width: 1.5; }
+.fraction-shape { display: grid; grid-template-columns: repeat(var(--parts, 4), 1fr); width: min(360px, 100%); height: 96px; margin: 10px auto; border: 3px solid var(--sage-dark); border-radius: 18px; overflow: hidden; }
+.fraction-part { border-right: 2px solid var(--sage-dark); background: white; }
+.fraction-part:last-child { border-right: 0; }
+.fraction-part.shaded { background: var(--green); }
+.coin-row, .pattern-row { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; align-items: center; margin-top: 12px; }
+.coin { width: 68px; height: 68px; border-radius: 50%; background: var(--cream); border: 3px solid var(--sage-dark); display: grid; place-items: center; font-weight: 900; box-shadow: inset 0 0 0 5px rgba(255,255,255,.55); }
+.place-value { display: grid; gap: 14px; justify-content: center; margin-top: 12px; }
+.ten-rod { display: inline-block; width: 18px; height: 92px; margin: 3px; border-radius: 7px; background: var(--blue); border: 2px solid var(--sage-dark); }
+.one-cube { display: inline-block; width: 28px; height: 28px; margin: 3px; border-radius: 7px; background: var(--green); border: 2px solid var(--sage-dark); }
+.pattern-item { min-width: 58px; min-height: 58px; border-radius: 18px; background: white; border: 2px solid rgba(83, 98, 70, 0.28); display: grid; place-items: center; font-weight: 900; padding: 8px; }
+.shape-svg { width: 160px; height: 160px; }
+@media (max-height: 820px) and (min-width: 700px) {
+  .card { padding: clamp(16px, 2.4vw, 30px); border-radius: 28px; }
+  .question-wrap { min-height: calc(100vh - 96px); }
+  .prompt { font-size: clamp(2.2rem, 6vw, 5rem); }
+  .key { min-height: 54px; }
+  .answer-box { min-height: 58px; font-size: 1.9rem; }
+  .question-actions { margin-top: 10px; }
+  .choice { min-height: 74px; }
+}
+@media (max-width: 699px) {
+  .response-layout { grid-template-columns: 1fr; width: 100%; }
+  .ok-button { min-height: 70px; }
+  .choice.minute-choice { min-height: 180px; }
+  .keypad { grid-template-columns: repeat(3, minmax(58px, 84px)); }
+}
+
+/* Round 4 review grid and count-based progress */
+.review-tile-grid {
+  width: min(720px, 100%);
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(92px, 1fr));
+  gap: 14px;
+  margin: 0 auto 10px;
+}
+.review-tile {
+  min-height: 112px;
+  border-radius: 24px;
+  border: 3px solid rgba(83, 98, 70, 0.18);
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  gap: 4px;
+  font-weight: 900;
+}
+.review-tile.correct { background: var(--green); border-color: rgba(83, 98, 70, 0.42); color: #365134; }
+.review-tile.wrong { background: var(--rose); border-color: rgba(199, 84, 70, 0.58); color: #793b35; }
+.review-tile-number { font-size: clamp(2rem, 4vw, 3rem); line-height: 1; }
+.review-tile-icon { font-size: 1.25rem; }
+.hundred-flat {
+  display: inline-block;
+  width: 72px;
+  height: 72px;
+  margin: 4px;
+  border-radius: 10px;
+  background: var(--cream);
+  border: 2px solid var(--sage-dark);
+  background-image: linear-gradient(rgba(83,98,70,.18) 1px, transparent 1px), linear-gradient(90deg, rgba(83,98,70,.18) 1px, transparent 1px);
+  background-size: 14px 14px;
+}
+@media (max-width: 699px) {
+  .review-tile-grid { grid-template-columns: repeat(2, minmax(92px, 1fr)); }
+  .review-tile { min-height: 96px; }
+}
