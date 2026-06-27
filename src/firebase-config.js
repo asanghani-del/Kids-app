@@ -6,10 +6,10 @@
 // only, no sign-in screen, no network calls to Firebase. Cross-device sync
 // only switches on once you replace these with real values.
 export const firebaseConfig = {
-  apiKey: 'YOUR_API_KEY',
-  authDomain: 'YOUR_PROJECT.firebaseapp.com',
-  projectId: 'YOUR_PROJECT',
-  storageBucket: 'YOUR_PROJECT.appspot.com',
-  messagingSenderId: 'YOUR_SENDER_ID',
-  appId: 'YOUR_APP_ID'
+  apiKey: 'AIzaSyCYI6Ga4Em_AIffoG3znKe51Qzem4MOaVU',
+  authDomain: 'kids-maths-app.firebaseapp.com',
+  projectId: 'kids-maths-app',
+  storageBucket: 'kids-maths-app.firebasestorage.app',
+  messagingSenderId: '957228731933',
+  appId: '1:957228731933:web:9d3df040b469f5778980f4'
 };
