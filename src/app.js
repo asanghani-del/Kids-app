@@ -78,8 +78,7 @@ function handleAuthChange(user) {
 
 function loadState() {
   const saved = localStorage.getItem(storeKey);
-  if (saved) return JSON.parse(saved);
-  return {
+  const defaults = {
     profiles: defaultProfiles,
     attempts: [],
     lessonSummaries: [],
@@ -93,6 +92,12 @@ function loadState() {
     contentVersion: 1,
     currentProfileId: null
   };
+  if (!saved) return defaults;
+  try {
+    return { ...defaults, ...JSON.parse(saved) };
+  } catch {
+    return defaults;
+  }
 }
 function saveState() { localStorage.setItem(storeKey, JSON.stringify(state)); }
 function html(strings, ...values) { return strings.map((s, i) => s + (values[i] ?? '')).join(''); }
@@ -118,9 +123,14 @@ function focusMainHeading() {
   target.focus({ preventScroll: false });
 }
 function statusPill() { return `<span class="offline">${navigator.onLine ? 'Online, ready to refresh' : 'Offline, lesson bank available'}</span>`; }
+function authBadge() {
+  if (!isCloudConfigured || !cloudUser) return '';
+  return `<span class="badge">${escapeText(cloudUser.email)} <button class="ghost" data-signout>Sign out</button></span>`;
+}
 function bindGlobalButtons() {
   document.querySelectorAll('[data-route]').forEach(btn => btn.addEventListener('click', () => setRoute(btn.dataset.route)));
   document.querySelectorAll('[data-speak]').forEach(btn => btn.addEventListener('click', () => speak(btn.dataset.speak)));
+  document.querySelectorAll('[data-signout]').forEach(btn => btn.addEventListener('click', () => { signOutParent().catch(() => {}); }));
 }
 function speak(text) {
   if (!('speechSynthesis' in window)) return;
@@ -168,7 +178,7 @@ async function submitAuth(authFn) {
 
 function profiles() {
   shell(html`
-    <div class="top-row"><div>${statusPill()}</div><button class="ghost" data-route="parentGate">Parent Area</button></div>
+    <div class="top-row"><div>${statusPill()} ${authBadge()}</div><button class="ghost" data-route="parentGate">Parent Area</button></div>
     <h1>Who is learning?</h1>
     <p>Choose a profile. Each child has their own learning path and today's lesson.</p>
     <div class="grid profiles">
@@ -194,7 +204,7 @@ function home() {
   const skills = eligibleSkills(profile);
   const masteryEntries = Object.entries(profile.mastery || {});
   shell(html`
-    <div class="top-row"><button class="ghost" data-route="profiles">Change profile</button><div class="nav"><button class="ghost" data-route="parentGate">Parent Area</button>${statusPill()}</div></div>
+    <div class="top-row"><button class="ghost" data-route="profiles">Change profile</button><div class="nav"><button class="ghost" data-route="parentGate">Parent Area</button>${statusPill()}${authBadge()}</div></div>
     <h1>Hello, ${escapeText(profile.name)}</h1>
     <p>Lesson ${nextLessonNumber} is ready. We will practise ${skills.map(s => s.label.toLowerCase()).join(', ')}.</p>
     <button class="primary cta-large" data-start-lesson>Start Lesson ${nextLessonNumber}</button>
@@ -398,6 +408,7 @@ function lesson() {
       <div class="top-row">
         <div class="progress-dots">${lessonSession.questions.map((_, i) => `<span class="dot ${i < lessonSession.index ? 'done' : ''}"></span>`).join('')}</div>
         <button class="secondary" data-speak="${escapeText(speakText)}">Hear</button>
+        ${authBadge()}
       </div>
       <div class="question-main">
         <div class="prompt">${escapeText(q.prompt)}</div>
@@ -551,6 +562,7 @@ function results() {
     return { skillId, label: SKILL_DEFS.find(s => s.id === skillId)?.label || skillId, total: list.length, correct: skillCorrect, wrong: list.length - skillCorrect };
   });
   shell(html`
+    <div class="top-row"><div></div>${authBadge()}</div>
     <div class="question-main" style="text-align:left; align-items:stretch">
       <h1 style="text-align:center">${allCorrect ? 'Amazing — all correct!' : 'Lesson complete!'}</h1>
       <p style="text-align:center">${correctCount} out of ${answers.length} correct overall.</p>
@@ -582,7 +594,7 @@ function review() {
   if (!item) return setRoute('results');
   const explanation = explain(item);
   shell(html`
-    <div class="top-row"><h3>Question ${idx + 1} of ${items.length}</h3><button class="secondary" data-speak="${escapeText(explanation)}">Hear</button></div>
+    <div class="top-row"><h3>Question ${idx + 1} of ${items.length}</h3><div class="nav"><button class="secondary" data-speak="${escapeText(explanation)}">Hear</button>${authBadge()}</div></div>
     <div class="question-main">
       <div class="review-box">
         <h2>Question: ${escapeText(item.prompt)}</h2>
@@ -675,7 +687,7 @@ function celebration() {
 }
 function parentGate() {
   shell(html`
-    <div class="top-row"><button class="ghost" data-route="profiles">Back</button>${statusPill()}</div>
+    <div class="top-row"><button class="ghost" data-route="profiles">Back</button><div class="nav">${statusPill()}${authBadge()}</div></div>
     <h1>Parent Area</h1>
     <p>Enter the parent PIN. For this prototype, the default PIN is 1234.</p>
     <div class="grid" style="max-width:420px">
@@ -693,7 +705,7 @@ function parentDashboard() {
   const summaries = [...state.lessonSummaries].reverse();
   const mistakes = [...state.attempts].filter(a => !a.isCorrect || a.usedHint).slice(-12).reverse();
   shell(html`
-    <div class="top-row"><div><h1>Parent Dashboard</h1><p>Progress, recent mistakes, mastery and offline sync status.</p></div><div class="nav"><button class="ghost" data-route="profiles">Child mode</button><button class="secondary" data-refresh>Refresh content</button><button class="primary" data-sync>Sync now</button>${cloudUser ? '<button class="ghost" data-signout>Sign out</button>' : ''}</div></div>
+    <div class="top-row"><div><h1>Parent Dashboard</h1><p>Progress, recent mistakes, mastery and offline sync status.</p></div><div class="nav"><button class="ghost" data-route="profiles">Child mode</button><button class="secondary" data-refresh>Refresh content</button><button class="primary" data-sync>Sync now</button>${authBadge()}</div></div>
     <div class="grid dashboard">
       <div class="dashboard-card">
         <h2>Children</h2>
@@ -733,7 +745,6 @@ function parentDashboard() {
   `);
   document.querySelector('[data-sync]').addEventListener('click', () => { state.syncQueue = []; saveState(); render(); });
   document.querySelector('[data-refresh]').addEventListener('click', () => { state.contentVersion += 1; saveState(); render(); });
-  document.querySelector('[data-signout]')?.addEventListener('click', () => { signOutParent().catch(() => {}); });
   document.querySelectorAll('[data-remove-profile]').forEach(btn => btn.addEventListener('click', () => {
     if (state.profiles.length <= 1) return;
     const id = btn.dataset.removeProfile;
