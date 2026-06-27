@@ -203,13 +203,17 @@ function home() {
   const nextLessonNumber = completedCount + 1;
   const skills = eligibleSkills(profile);
   const masteryEntries = Object.entries(profile.mastery || {});
+  const level = profile.microLevel || 1;
+  const tierEntries = Object.entries(profile.skillTiers || {});
   shell(html`
     <div class="top-row"><button class="ghost" data-route="profiles">Change profile</button><div class="nav"><button class="ghost" data-route="parentGate">Parent Area</button>${statusPill()}${authBadge()}</div></div>
     <h1>Hello, ${escapeText(profile.name)}</h1>
+    <div class="level-banner"><strong>Level ${level} of ${MAX_TIER}</strong><span class="small">Computed from real lesson results — not a label anyone typed in.</span></div>
     <p>Lesson ${nextLessonNumber} is ready. We will practise ${skills.map(s => s.label.toLowerCase()).join(', ')}.</p>
     <button class="primary cta-large" data-start-lesson>Start Lesson ${nextLessonNumber}</button>
     <h3>Progress</h3>
     <p class="small">${completedCount} lesson${completedCount === 1 ? '' : 's'} completed so far.</p>
+    ${tierEntries.length ? `<div class="tier-chip-row">${tierEntries.map(([id, t]) => `<span class="tier-chip">${escapeText(SKILL_DEFS.find(s => s.id === id)?.label || id)}: tier ${t}</span>`).join('')}</div>` : ''}
     <div class="grid stat-grid" style="margin-top:12px">
       ${masteryEntries.length ? masteryEntries.map(([id, v]) => `<div class="stat-card"><strong>${skillScore(profile.id, id).label}</strong><span>${escapeText(skillLabelForMicroId(id))}</span></div>`).join('') : '<div class="stat-card"><strong>—</strong><span>No lessons yet</span></div>'}
       <div class="stat-card"><strong>${state.syncQueue.length}</strong><span>Items to sync</span></div>
@@ -323,6 +327,15 @@ const SKILL_DEFS = [
     explanationType: 'bond20', visualType: 'tenFrame', minTier: 3,
     rangeForTier: () => [1, 19],
     build: a => ({ prompt: `${a} + __ = 20`, a, correctAnswer: 20 - a })
+  },
+  {
+    id: 'times_tables', microSkillId: 'times_tables', label: 'Times tables',
+    explanationType: 'timesTable', visualType: 'timesTable', minTier: 2,
+    rangeForTier: () => [1, 12],
+    build: (a, tier) => {
+      const table = tier <= 4 ? [2, 5, 10][randomInt(0, 2)] : [2, 3, 4, 5, 10][randomInt(0, 4)];
+      return { prompt: `${a} × ${table} = ?`, a, table, correctAnswer: a * table, choiceType: 'numericChoice', visualData: { a, table } };
+    }
   },
   {
     id: 'read_oclock', microSkillId: 'identify_oclock_analogue', label: "Reading o'clock",
@@ -602,7 +615,7 @@ function lesson() {
 }
 
 function renderQuestionVisual(q) {
-  if (!['barModel', 'fractionShape', 'shape', 'measurement', 'money', 'placeValue', 'pattern'].includes(q.visualType)) return '';
+  if (!['barModel', 'fractionShape', 'shape', 'measurement', 'money', 'placeValue', 'pattern', 'timesTable'].includes(q.visualType)) return '';
   return renderVisual({ question: q, correctAnswer: q.correctAnswer, childAnswer: '' });
 }
 
@@ -689,6 +702,7 @@ function diagnose(q, answer) {
   }
   if (q.skillId === 'number_bonds_to_10' && numAnswer === a + 10) return { tag: 'added_instead_of_missing' };
   if (q.skillId === 'number_bonds_to_20' && numAnswer === a + 20) return { tag: 'added_instead_of_missing' };
+  if (q.skillId === 'times_tables' && numAnswer === a + q.table) return { tag: 'added_instead_of_multiplied' };
   if (q.skillId === 'read_oclock' && String(answer).endsWith(':30')) return { tag: 'confused_oclock_and_half_past' };
   if (q.skillId === 'read_half_past' && String(answer).endsWith(':00')) return { tag: 'confused_half_past_and_oclock' };
   if (q.visualType === 'clock' && String(answer).split(':')[1] !== String(q.correctAnswer).split(':')[1]) return { tag: 'clock_minute_hand' };
@@ -834,6 +848,10 @@ function explain(item) {
   if (q.explanationType === 'oclock') return `For an o'clock time, the long minute hand points to 12. The short hour hand points to the hour. ${q.correctAnswer} means ${q.correctAnswer.split(':')[0]} o'clock.`;
   if (q.explanationType === 'halfPast') return `For half past, the long minute hand points to 6, and the short hour hand sits halfway between two numbers. ${q.correctAnswer} means half past ${q.correctAnswer.split(':')[0]}.`;
   if (q.explanationType === 'quarterHour') return `Quarter past means 15 minutes after the hour. Quarter to means 15 minutes before the next hour. Look for the long hand on 3 or 9, then check the short hand.`;
+  if (q.explanationType === 'timesTable') {
+    const extra = item.misconceptionTag === 'added_instead_of_multiplied' ? ` You may have added instead of multiplying.` : '';
+    return `${q.a} × ${q.table} means ${q.a} groups of ${q.table}. Add ${q.table} up ${q.a} times: that's ${item.correctAnswer}.${extra}`;
+  }
   if (q.explanationType === 'fiveMinuteClock') return `Count round the clock in fives with the long hand. Each big number is 5 more minutes. The correct clock shows ${q.correctAnswer}.`;
   if (q.explanationType === 'oneMinuteClock') return `Use the five-minute numbers first, then count the small tick marks one by one. The correct clock shows ${q.correctAnswer}.`;
   if (q.explanationType === 'placeValue') return `${q.correctAnswer} has ${Math.floor(Number(q.correctAnswer) / 10)} tens and ${Number(q.correctAnswer) % 10} ones. Count the tens rods first, then the ones cubes.`;
@@ -865,7 +883,13 @@ function renderVisual(item) {
   if (q.visualType === 'money') return `<div class="visual-line"><strong>UK coins</strong><div class="coin-row">${(q.visualData?.coins || []).map(coin => `<span class="coin">${coin >= 100 ? '£' + coin / 100 : coin + 'p'}</span>`).join('')}</div></div>`;
   if (q.visualType === 'placeValue') return `<div class="visual-line"><strong>Tens and ones</strong>${placeValueSvg(q.visualData?.number || q.correctAnswer)}</div>`;
   if (q.visualType === 'pattern') return `<div class="visual-line"><strong>Pattern</strong>${patternHtml(q.visualData)}</div>`;
+  if (q.visualType === 'timesTable') return `<div class="visual-line"><strong>Groups</strong>${timesTableHtml(q.visualData)}</div>`;
   return '';
+}
+function timesTableHtml(data = {}) {
+  const a = data.a || 1;
+  const table = data.table || 1;
+  return `<div class="pattern-row">${Array.from({ length: a }, () => `<span class="pattern-item" style="display:flex;gap:4px;flex-wrap:wrap;min-width:auto">${Array.from({ length: table }, () => '🔵').join('')}</span>`).join('')}</div>`;
 }
 function barModelSvg(data = {}) {
   const total = Math.max(1, data.total || (data.known || 0) + (data.unknown || 0));
@@ -952,7 +976,13 @@ function parentDashboard() {
           ${state.profiles.map(p => `
             <div class="stat-card">
               <strong>${p.avatar} ${escapeText(p.name)}</strong><span>${escapeText(p.stage)}</span>
+              <p class="small" style="margin:6px 0">Computed level: <strong>${p.microLevel || 1} of ${MAX_TIER}</strong></p>
               <p class="small">${Object.keys(p.mastery || {}).length ? Object.keys(p.mastery).map(id => `${escapeText(skillLabelForMicroId(id))}: ${skillScore(p.id, id).label}`).join(', ') : 'No lessons yet'}</p>
+              ${Object.keys(p.skillTiers || {}).length ? `<p class="small">${Object.entries(p.skillTiers).map(([id, t]) => `${escapeText(SKILL_DEFS.find(s => s.id === id)?.label || id)}: tier ${t}`).join(', ')}</p>` : ''}
+              <div class="level-override">
+                <label class="small">Set difficulty level<input type="number" min="1" max="${MAX_TIER}" value="${p.microLevel || 1}" class="answer-box" id="level-input-${p.id}" style="min-width:70px; min-height:48px"></label>
+                <button class="secondary" data-set-level="${p.id}">Apply</button>
+              </div>
               <button class="danger" data-remove-profile="${p.id}" ${state.profiles.length <= 1 ? 'disabled' : ''}>Remove</button>
             </div>`).join('')}
         </div>
@@ -992,6 +1022,25 @@ function parentDashboard() {
     if (cloudUser) deleteChildCloud(cloudUser.uid, id).catch(() => {});
     render();
   }));
+  document.querySelectorAll('[data-set-level]').forEach(btn => btn.addEventListener('click', () => {
+    const id = btn.dataset.setLevel;
+    const target = state.profiles.find(p => p.id === id);
+    if (!target) return;
+    const input = document.querySelector(`#level-input-${id}`);
+    const newLevel = Math.max(1, Math.min(MAX_TIER, Number(input.value) || 1));
+    target.microLevel = newLevel;
+    // Lift any per-skill tiers that are lagging behind so the override
+    // takes effect everywhere immediately, not just for skills the child
+    // hasn't started yet -- otherwise an already-tracked easy skill would
+    // stay stuck at its old (lower) tier despite the override.
+    target.skillTiers = { ...(target.skillTiers || {}) };
+    Object.keys(target.skillTiers).forEach(skillId => {
+      target.skillTiers[skillId] = Math.max(target.skillTiers[skillId], newLevel);
+    });
+    saveState();
+    if (cloudUser) saveChildCloud(cloudUser.uid, target).catch(() => {});
+    render();
+  }));
   document.querySelector('[data-add-profile]').addEventListener('click', () => {
     const name = document.querySelector('#new-child-name').value.trim();
     const avatar = document.querySelector('#new-child-avatar').value.trim() || '🐧';
@@ -1026,6 +1075,7 @@ function labelMistake(tag, usedHint) {
   if (tag === 'clock_minute_hand') return 'May need minute-hand practice';
   if (tag === 'coin_total_low') return 'May have missed a coin';
   if (tag === 'tens_ones_swapped') return 'May have swapped tens and ones';
+  if (tag === 'added_instead_of_multiplied') return 'May have added instead of multiplying';
   if (usedHint) return 'Used hint';
   return 'Needs review';
 }
@@ -1038,6 +1088,7 @@ function hintFor(q) {
   if (q.explanationType === 'oclock') return `For o'clock, the long hand points to 12.`;
   if (q.explanationType === 'halfPast') return `For half past, the long hand points to 6.`;
   if (q.explanationType === 'quarterHour') return `Quarter past uses the 3. Quarter to uses the 9.`;
+  if (q.explanationType === 'timesTable') return `Think of it as ${q.a} groups of ${q.table}.`;
   if (q.explanationType === 'fiveMinuteClock') return `Count the minute hand round in fives: 5, 10, 15, 20...`;
   if (q.explanationType === 'oneMinuteClock') return `Find the nearest five-minute mark, then count the small ticks one by one.`;
   if (q.explanationType === 'placeValue') return `Count tens first, then add the ones.`;

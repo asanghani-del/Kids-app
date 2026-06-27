@@ -209,3 +209,22 @@ p { font-size: clamp(1.02rem, 1.6vw, 1.28rem); line-height: 1.5; color: var(--mu
   .review-tile-grid { grid-template-columns: repeat(2, minmax(92px, 1fr)); }
   .review-tile { min-height: 96px; }
 }
+
+/* Round 5: prominent computed level + manual difficulty override */
+.level-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  background: var(--green);
+  border: 2px solid rgba(83, 98, 70, 0.25);
+  border-radius: 20px;
+  padding: 14px 20px;
+  margin-bottom: 18px;
+}
+.level-banner strong { font-size: 1.4rem; color: #365134; }
+.tier-chip-row { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 4px; }
+.tier-chip { display: inline-flex; padding: 6px 12px; border-radius: 999px; background: var(--blue); font-size: 0.85rem; font-weight: 700; color: #1d3a57; }
+.level-override { display: flex; align-items: end; gap: 10px; margin: 10px 0; flex-wrap: wrap; }
+.level-override label { display: flex; flex-direction: column; gap: 4px; }
+
