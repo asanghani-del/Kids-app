@@ -34,6 +34,15 @@ async function init() {
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
   window.addEventListener('online', render);
   window.addEventListener('offline', render);
+  // Chrome (and some other browsers) load the voice list asynchronously,
+  // often arriving empty on the very first query -- warm it up now at
+  // startup instead of waiting for the first "Hear" tap, so by the time a
+  // child actually uses it, pickVoice() already has the real list cached
+  // rather than locking in the browser's raw (often flat/male) default.
+  if ('speechSynthesis' in window) {
+    speechSynthesis.getVoices();
+    speechSynthesis.addEventListener('voiceschanged', () => { cachedVoice = undefined; pickVoice(); }, { once: true });
+  }
   if (isCloudConfigured) {
     route = { screen: 'signIn' };
     onAuthChange(handleAuthChange);
@@ -223,8 +232,18 @@ function pickVoice() {
     else if (v.lang?.startsWith('en')) s += 2;
     if (name.includes('natural')) s += 10; // Edge/Windows neural voices
     if (/google uk english female|google us english/.test(name)) s += 8;
-    if (/samantha|kate|serena|stephanie/.test(name)) s += 7; // Apple voices
+    // Known good, non-robotic voices across Apple/Microsoft/Google --
+    // deliberately a long list, since whichever of these happens to be
+    // installed on a given device varies a lot, and the default voice a
+    // browser falls back to (often a flat male "Daniel"/"David" on
+    // Apple devices that haven't downloaded extra voices) is exactly the
+    // robotic-sounding one we're trying to avoid.
+    if (/samantha|kate|serena|stephanie|moira|tessa|karen|fiona|martha|zira|libby|sonia|aria|susan|joanna|salli|emma/.test(name)) s += 7;
     if (name.includes('female')) s += 3;
+    // Common flat default male voices -- not banned outright (still
+    // better than nothing if it's all a device has), just deprioritised
+    // behind anything nicer that's also installed.
+    if (/daniel|david|mark|george|arthur|ryan|guy|fred|alex(?!a)/.test(name)) s -= 4;
     if (/compact|robot|espeak/.test(name)) s -= 10;
     return s;
   };
@@ -440,7 +459,10 @@ function learningProgressionPath() {
   shell(html`
     <div class="top-row"><button class="ghost" data-route="home">Back</button><div class="nav">${authBadge()}</div></div>
     <h1>Learning Progression</h1>
-    <p class="small">${animal.emoji} ${escapeText(animal.name)}</p>
+    <div class="progression-badge">
+      <span class="progression-emoji">${animal.emoji}</span>
+      <strong class="progression-name">${escapeText(animal.name)}</strong>
+    </div>
     <div class="stepping-path">
       ${stones.map((n, i) => {
         const isDone = n < nextLessonNumber;
@@ -455,7 +477,7 @@ function learningProgressionPath() {
         </div>`;
       }).join('')}
     </div>
-    <button class="primary cta-large" data-start-progression>Start Lesson ${nextLessonNumber}</button>
+    <button class="primary cta-large" style="margin-top:28px" data-start-progression>Start Lesson ${nextLessonNumber}</button>
   `);
   document.querySelector('[data-start-progression]').addEventListener('click', startLesson);
 }
@@ -722,12 +744,13 @@ function skillsArea() {
   shell(html`
     <div class="top-row"><button class="ghost" data-route="home">Back</button><div class="nav">${authBadge()}</div></div>
     <h1>Skills Area</h1>
-    <div class="grid topic-grid">
+    <div class="grid topic-grid topic-grid-big">
       ${TOPIC_DEFS.map(t => {
         const level = topicLevel(profile, t.id);
         const needsWork = topicLevel(profile, t.id, { onlyEligible: true }) < 3;
         const animal = animalForTier(level);
-        return `<button class="topic-card ${needsWork ? 'needs-work' : ''}" data-topic="${t.id}">
+        return `<button class="topic-card topic-card-big ${needsWork ? 'needs-work' : ''}" data-topic="${t.id}">
+          <span class="topic-icon">${t.icon}</span>
           <strong>${escapeText(t.label)}</strong>
           <span class="small">${animal.emoji} ${escapeText(animal.name)}</span>
           ${needsWork ? '<span class="topic-flag">Needs practice</span>' : ''}
@@ -766,12 +789,15 @@ function speedTestSetup() {
   shell(html`
     <div class="top-row"><button class="ghost" data-route="home">Back</button><div class="nav">${authBadge()}</div></div>
     <h1>Speed Test</h1>
-    <p class="small">${SPEED_QUESTION_MS / 1000}s per question</p>
-    <div class="grid topic-grid">
-      <button class="topic-card" data-speed-topic="">
+    <div class="grid topic-grid topic-grid-big">
+      <button class="topic-card topic-card-big" data-speed-topic="">
+        <span class="topic-icon">🎲</span>
         <strong>Mixed</strong>
       </button>
-      ${TOPIC_DEFS.map(t => `<button class="topic-card" data-speed-topic="${t.id}"><strong>${escapeText(t.label)}</strong></button>`).join('')}
+      ${TOPIC_DEFS.map(t => `<button class="topic-card topic-card-big" data-speed-topic="${t.id}">
+        <span class="topic-icon">${t.icon}</span>
+        <strong>${escapeText(t.label)}</strong>
+      </button>`).join('')}
     </div>
   `);
   document.querySelectorAll('[data-speed-topic]').forEach(btn => btn.addEventListener('click', () => startSpeedTest(btn.dataset.speedTopic || null)));
@@ -866,13 +892,13 @@ const SKILL_DEFS = [
   },
   {
     id: 'number_bonds_to_10', microSkillId: 'bonds_to_10_missing_addend', label: 'Number bonds to 10',
-    explanationType: 'bond10', visualType: 'tenFrame',
+    explanationType: 'bond10', visualType: 'tenFrame', maxTier: 5,
     rangeForTier: () => [1, 9],
     build: a => ({ prompt: `${a} + __ = 10`, a, correctAnswer: 10 - a })
   },
   {
     id: 'number_bonds_to_20', microSkillId: 'bonds_to_20_missing_addend', label: 'Number bonds to 20',
-    explanationType: 'bond20', visualType: 'tenFrame', minTier: 3,
+    explanationType: 'bond20', visualType: 'tenFrame', minTier: 3, maxTier: 7,
     rangeForTier: () => [1, 19],
     build: a => ({ prompt: `${a} + __ = 20`, a, correctAnswer: 20 - a })
   },
@@ -887,19 +913,19 @@ const SKILL_DEFS = [
   },
   {
     id: 'read_oclock', microSkillId: 'identify_oclock_analogue', label: "Reading o'clock",
-    explanationType: 'oclock', visualType: 'clock', clockSkill: true,
+    explanationType: 'oclock', visualType: 'clock',
     rangeForTier: () => [1, 12],
     build: hour => ({ prompt: `Which clock shows ${hour} o'clock?`, a: hour, correctAnswer: `${hour}:00`, choiceType: 'clock' })
   },
   {
     id: 'read_half_past', microSkillId: 'identify_half_past_analogue', label: 'Reading half past',
-    explanationType: 'halfPast', visualType: 'clock', minTier: 1, clockSkill: true,
+    explanationType: 'halfPast', visualType: 'clock', minTier: 1,
     rangeForTier: () => [1, 12],
     build: hour => ({ prompt: `Which clock shows half past ${hour}?`, a: hour, correctAnswer: `${hour}:30`, choiceType: 'clock' })
   },
   {
     id: 'read_quarter_hours', microSkillId: 'identify_quarter_hour_analogue', label: 'Reading quarter past and quarter to',
-    explanationType: 'quarterHour', visualType: 'clock', minTier: 2, clockSkill: true,
+    explanationType: 'quarterHour', visualType: 'clock', minTier: 2,
     rangeForTier: () => [1, 12],
     build: hour => {
       const past = Math.random() < 0.5;
@@ -910,7 +936,7 @@ const SKILL_DEFS = [
   },
   {
     id: 'read_five_minute_intervals', microSkillId: 'identify_five_minute_analogue', label: 'Reading five-minute times',
-    explanationType: 'fiveMinuteClock', visualType: 'clock', minTier: 2, clockSkill: true,
+    explanationType: 'fiveMinuteClock', visualType: 'clock', minTier: 2,
     rangeForTier: () => [1, 12],
     build: hour => {
       const minutes = [5, 10, 20, 25, 35, 40, 50, 55][randomInt(0, 7)];
@@ -923,7 +949,7 @@ const SKILL_DEFS = [
   },
   {
     id: 'read_one_minute_intervals', microSkillId: 'identify_one_minute_analogue', label: 'Reading one-minute times',
-    explanationType: 'oneMinuteClock', visualType: 'clock', minTier: 4, clockSkill: true, requiresSkill: 'read_five_minute_intervals', requiresMicroSkill: 'identify_five_minute_analogue',
+    explanationType: 'oneMinuteClock', visualType: 'clock', minTier: 4, requiresSkill: 'read_five_minute_intervals', requiresMicroSkill: 'identify_five_minute_analogue',
     rangeForTier: () => [1, 12],
     build: hour => {
       let minutes = randomInt(1, 59);
@@ -1158,8 +1184,22 @@ function eligibleSkills(profile) {
   const level = profile.microLevel || 1;
   return SKILL_DEFS.filter(s => {
     if (s.requiresSkill && !skillPassed(profile, s.requiresSkill, s.requiresMicroSkill)) return false;
-    if (s.clockSkill) return !s.minTier || (profile.skillTiers?.[s.id] || level) >= s.minTier;
-    return !s.minTier || level >= s.minTier;
+    // Clock skills used to gate on (profile.skillTiers[id] || level), which
+    // let a skill leak in early if its own per-skill tier had ever been
+    // bumped (e.g. via a Skills Area session) even while the overall level
+    // hadn't reached its minTier yet -- e.g. "quarter past" showing up in a
+    // Level 1 lesson that should only have add_one_more-style content.
+    // Every skill now gates purely on the overall level, consistently.
+    if (s.minTier && level < s.minTier) return false;
+    // Some foundational fluency skills (e.g. bonds to 10) deliberately
+    // never get numerically harder -- without a ceiling they keep
+    // competing for slots in advanced mixed lessons forever, landing a
+    // trivial question in the middle of a hard round. maxTier retires
+    // them from *ordinary* rotation once the child's overall level has
+    // clearly moved past them; they're still reachable on purpose via
+    // Skills Area / Learning Zone.
+    if (s.maxTier && level > s.maxTier) return false;
+    return true;
   });
 }
 function skillLabelForMicroId(microId) {
@@ -1171,15 +1211,15 @@ function skillLabelForMicroId(microId) {
 // parent or child actually thinks in ("Fractions", "Division"), so progress
 // can be reported and practised at that level rather than only per-skill.
 const TOPIC_DEFS = [
-  { id: 'addition_subtraction', label: 'Addition & Subtraction', skillIds: ['add_one_more', 'add_two_more', 'subtract_one', 'number_bonds_to_10', 'number_bonds_to_20', 'bar_model_word_problems', 'missing_number_equations', 'multi_step_word_problems'] },
-  { id: 'multiplication_division', label: 'Multiplication & Division', skillIds: ['times_tables', 'division_facts'] },
-  { id: 'fractions', label: 'Fractions', skillIds: ['fractions_visual', 'fractions_of_amounts'] },
-  { id: 'number_place_value', label: 'Number & Place Value', skillIds: ['place_value_tens_ones', 'rounding_nearest_10', 'negative_numbers_intro', 'decimals_intro'] },
-  { id: 'money', label: 'Money', skillIds: ['uk_money_total'] },
-  { id: 'measurement', label: 'Measurement', skillIds: ['measurement_compare', 'measurement_units'] },
-  { id: 'time', label: 'Time', skillIds: ['read_oclock', 'read_half_past', 'read_quarter_hours', 'read_five_minute_intervals', 'read_one_minute_intervals', 'elapsed_time', 'digital_24hr_conversion'] },
-  { id: 'shape_geometry', label: 'Shape & Geometry', skillIds: ['shape_geometry'] },
-  { id: 'patterns_data', label: 'Patterns & Data', skillIds: ['patterns_sequences', 'data_handling_pictogram'] }
+  { id: 'addition_subtraction', label: 'Addition & Subtraction', icon: '➕', skillIds: ['add_one_more', 'add_two_more', 'subtract_one', 'number_bonds_to_10', 'number_bonds_to_20', 'bar_model_word_problems', 'missing_number_equations', 'multi_step_word_problems'] },
+  { id: 'multiplication_division', label: 'Multiplication & Division', icon: '✖️', skillIds: ['times_tables', 'division_facts'] },
+  { id: 'fractions', label: 'Fractions', icon: '🍕', skillIds: ['fractions_visual', 'fractions_of_amounts'] },
+  { id: 'number_place_value', label: 'Number & Place Value', icon: '🔢', skillIds: ['place_value_tens_ones', 'rounding_nearest_10', 'negative_numbers_intro', 'decimals_intro'] },
+  { id: 'money', label: 'Money', icon: '💰', skillIds: ['uk_money_total'] },
+  { id: 'measurement', label: 'Measurement', icon: '📏', skillIds: ['measurement_compare', 'measurement_units'] },
+  { id: 'time', label: 'Time', icon: '⏰', skillIds: ['read_oclock', 'read_half_past', 'read_quarter_hours', 'read_five_minute_intervals', 'read_one_minute_intervals', 'elapsed_time', 'digital_24hr_conversion'] },
+  { id: 'shape_geometry', label: 'Shape & Geometry', icon: '🔺', skillIds: ['shape_geometry'] },
+  { id: 'patterns_data', label: 'Patterns & Data', icon: '🧩', skillIds: ['patterns_sequences', 'data_handling_pictogram'] }
 ];
 const SKILL_TO_TOPIC = Object.fromEntries(TOPIC_DEFS.flatMap(t => t.skillIds.map(id => [id, t.id])));
 function topicForSkill(skillId) { return SKILL_TO_TOPIC[skillId]; }
@@ -1291,7 +1331,10 @@ function shapeChoices(correct) { return topUpChoices([correct, 'triangle', 'squa
 // Comparison questions only ever have 3 possible real answers (A, B,
 // same) -- a 4th would have to be a fake/duplicate option, so this one
 // stays at 3 choices deliberately, unlike every other choice type below.
-function compareChoices(correct) { return topUpChoices([correct, correct === 'A' ? 'B' : 'A', 'same'], () => ['A', 'B', 'same'][randomInt(0, 2)], 3); }
+// Always exactly A, B, Same, in that fixed reading order -- shuffling a
+// set this small just made the correct answer's position look broken
+// ("why is B listed before A?") rather than meaningfully randomised.
+function compareChoices() { return ['A', 'B', 'same']; }
 function patternChoices(correct) { return topUpChoices([correct, 'circle', 'square', 'triangle', 'red', 'blue', '2', '4', '6', '10', '15'], () => String(randomInt(1, 20))); }
 // Time-string answers (e.g. "2:30 pm" or "14:30") can't go through the
 // numeric distractorChoices path -- perturb the hour by one step instead,
@@ -1496,35 +1539,54 @@ function lesson() {
             : `<span class="${classes}" aria-label="Question ${i + 1}${i === lessonSession.index ? ' (current)' : ''}"></span>`;
         }).join('')}</div>
         ${isSpeed ? `<div class="timer-bar"><div class="timer-fill" data-timer-fill></div></div>` : ''}
-        <button class="secondary" data-speak="${escapeText(speakText)}">Hear</button>
+        <button class="secondary" data-speak="${escapeText(speakText)}">🔊 Hear</button>
         ${authBadge()}
       </div>
       <div class="question-main">
-        <div class="prompt">${escapeText(q.prompt)}</div>
+        <div class="prompt ${q.prompt.length > 28 ? 'prompt-long' : ''}">${escapeText(q.prompt)}</div>
         ${renderQuestionVisual(q)}
         ${renderQuestionInput(q)}
         ${canNavigate && isAnswered ? `<p class="small">Your answer: <strong>${escapeText(lessonSession.answers[lessonSession.index].childAnswer)}</strong> ${lessonSession.answers[lessonSession.index].isCorrect ? '✓' : '— tap a different answer to change it'}</p>` : ''}
-        ${lessonSession.hintOpen ? `<div class="hint-box">${hintFor(q)}</div>` : ''}
+        ${lessonSession.hintOpen ? `<div class="hint-box">💡 ${hintFor(q)}</div>` : ''}
       </div>
       <div class="question-actions">
-        ${canNavigate && lessonSession.index > 0 ? '<button class="secondary" data-prev>← Back</button>' : ''}
-        ${isSpeed ? '' : '<button class="secondary" data-hint>Hint</button>'}
-        ${canNavigate && isLastQuestion && isAnswered ? '<button class="primary" data-finish>Finish</button>' : ''}
-        ${canNavigate && !isLastQuestion && lessonSession.index < lessonSession.maxIndexReached ? '<button class="secondary" data-next>Next →</button>' : ''}
+        ${canNavigate && lessonSession.index > 0 ? '<button class="secondary" data-prev>⬅ Back</button>' : ''}
+        ${isSpeed ? '' : '<button class="secondary" data-hint>💡 Hint</button>'}
+        ${canNavigate && !isLastQuestion ? '<button class="secondary" data-next>Next ➡</button>' : ''}
+        ${canNavigate && isLastQuestion ? '<button class="primary" data-finish>✅ Finish</button>' : ''}
+        ${canNavigate && !isLastQuestion ? '<button class="ghost" data-skip-finish>Skip to finish</button>' : ''}
         <button class="ghost" data-route="home">Stop</button>
       </div>
     </div>
+    ${lessonSession.confirmingFinish ? html`
+      <div class="modal-overlay">
+        <div class="modal-card" style="text-align:center">
+          <h2>Finished! 🎉</h2>
+          <p>Do you want to review your answers before finishing?</p>
+          <div class="grid" style="gap:10px;margin-top:10px">
+            <button class="primary cta-large" data-review-yes>Yes, let me check</button>
+            <button class="secondary cta-large" data-review-no>No, finish now</button>
+          </div>
+        </div>
+      </div>
+    ` : ''}
   `);
   bindQuestion(q);
   if (isSpeed) startQuestionTimer(q);
 }
-// Jumps to any question already visited this lesson (never ahead of
-// maxIndexReached -- new questions are only generated by answering
-// forward, not by this nav) so a wrong tap or typo can be fixed without
-// losing the rest of the session.
+// Moves to any question in the lesson -- backwards to fix a wrong tap or
+// typo, or forwards (via the Next button / "Skip to finish") to move on
+// without waiting for an answer first. Forward moves past the current
+// frontier extend it, same as answering normally would; the dot-jump UI
+// only ever requests indices already within maxIndexReached, so this
+// never lets a child jump into a question that hasn't been generated yet.
 function goToQuestion(index) {
-  const clamped = Math.max(0, Math.min(lessonSession.maxIndexReached, index));
+  const clamped = Math.max(0, Math.min(lessonSession.totalQuestions - 1, index));
   lessonSession.index = clamped;
+  lessonSession.maxIndexReached = Math.max(lessonSession.maxIndexReached || 0, clamped);
+  if (!lessonSession.questions[clamped]) {
+    lessonSession.questions[clamped] = generateNextQuestion(lessonSession, currentProfile());
+  }
   const existing = lessonSession.answers[clamped];
   const q = lessonSession.questions[clamped];
   lessonSession.keypad = (existing && q?.type === 'keypad') ? String(existing.childAnswer ?? '') : '';
@@ -1561,7 +1623,8 @@ function renderQuestionVisual(q) {
 
 function renderQuestionInput(q) {
   if (q.type === 'choice') {
-    return `<div class="response-layout choice-layout"><div class="choices ${q.minutePrecision ? 'minute-choices' : ''}">${q.choices.map(choice => `<button class="choice ${q.minutePrecision ? 'minute-choice' : ''}" data-choice="${escapeText(choice)}">${formatChoice(q, choice)}</button>`).join('')}</div></div>`;
+    const colsClass = q.minutePrecision ? '' : `choices-${q.choices.length}`;
+    return `<div class="response-layout choice-layout"><div class="choices ${colsClass} ${q.minutePrecision ? 'minute-choices' : ''}">${q.choices.map(choice => `<button class="choice ${q.minutePrecision ? 'minute-choice' : ''}" data-choice="${escapeText(choice)}">${formatChoice(q, choice)}</button>`).join('')}</div></div>`;
   }
   return html`
     <div class="response-layout">
@@ -1581,14 +1644,17 @@ function formatChoice(q, choice) {
   return escapeText(choice);
 }
 function bindQuestion(q) {
-  document.querySelector('[data-hint]').addEventListener('click', () => { lessonSession.hintOpen = true; render(); });
+  document.querySelector('[data-hint]')?.addEventListener('click', () => { lessonSession.hintOpen = true; render(); });
   document.querySelectorAll('[data-key]').forEach(btn => btn.addEventListener('click', () => { lessonSession.keypad = (lessonSession.keypad + btn.dataset.key).slice(0, 5); render(); }));
   document.querySelector('[data-delete]')?.addEventListener('click', () => { lessonSession.keypad = lessonSession.keypad.slice(0, -1); render(); });
   document.querySelector('[data-ok]')?.addEventListener('click', () => submitAnswer(q, lessonSession.keypad));
   document.querySelectorAll('[data-choice]').forEach(btn => btn.addEventListener('click', () => submitAnswer(q, btn.dataset.choice)));
   document.querySelector('[data-prev]')?.addEventListener('click', () => goToQuestion(lessonSession.index - 1));
   document.querySelector('[data-next]')?.addEventListener('click', () => goToQuestion(lessonSession.index + 1));
-  document.querySelector('[data-finish]')?.addEventListener('click', () => finishLesson());
+  document.querySelector('[data-finish]')?.addEventListener('click', () => { lessonSession.confirmingFinish = true; render(); });
+  document.querySelector('[data-skip-finish]')?.addEventListener('click', () => { lessonSession.confirmingFinish = true; render(); });
+  document.querySelector('[data-review-yes]')?.addEventListener('click', () => { lessonSession.confirmingFinish = false; render(); });
+  document.querySelector('[data-review-no]')?.addEventListener('click', () => finishLesson());
   document.querySelectorAll('[data-jump]').forEach(btn => btn.addEventListener('click', () => goToQuestion(Number(btn.dataset.jump))));
 }
 function submitAnswer(q, rawAnswer) {
@@ -1681,7 +1747,12 @@ function diagnose(q, answer) {
 
 function finishLesson() {
   const profile = currentProfile();
-  const answers = lessonSession.answers;
+  // Forward navigation can now skip a question without answering it
+  // (Next/Skip to finish), leaving holes in the answers array -- count
+  // only questions actually answered, rather than trusting answers.length
+  // (which reflects the highest index touched, not how many have a real
+  // attempt in them).
+  const answers = lessonSession.answers.filter(Boolean);
   const correct = answers.filter(a => a.isCorrect).length;
   const summary = {
     id: lessonSession.id,
@@ -1766,18 +1837,14 @@ function updateMastery(profile, answers, accuracy, { adjustGlobalLevel = true } 
 function groupBy(items, key) { return items.reduce((acc, item) => ((acc[item[key]] ||= []).push(item), acc), {}); }
 
 function results() {
-  const answers = lessonSession?.answers || [];
+  const answers = (lessonSession?.answers || []).filter(Boolean);
   const correctCount = answers.filter(a => a.isCorrect).length;
   const allCorrect = answers.length > 0 && correctCount === answers.length;
   const wrongCount = answers.length - correctCount;
-  const bySkill = groupBy(answers, 'skillId');
-  const breakdown = Object.entries(bySkill).map(([skillId, list]) => {
-    const skillCorrect = list.filter(a => a.isCorrect).length;
-    return { skillId, label: SKILL_DEFS.find(s => s.id === skillId)?.label || skillId, total: list.length, correct: skillCorrect, wrong: list.length - skillCorrect };
-  });
   const topicLabel = lessonSession?.topicFilter ? TOPIC_DEFS.find(t => t.id === lessonSession.topicFilter)?.label : null;
   const topicDelta = topicLabel ? lessonSession.topicLevelAfter - lessonSession.topicLevelBefore : 0;
   const speedResult = lessonSession?.speedResult;
+  const viewing = Number.isInteger(route.explainIndex) ? answers[route.explainIndex] : null;
   shell(html`
     <div class="top-row"><div></div>${authBadge()}</div>
     <div class="question-main" style="text-align:left; align-items:stretch">
@@ -1789,21 +1856,33 @@ function results() {
       ${speedResult ? `<div class="level-banner" style="justify-content:center">
         <strong>${speedResult.improved ? `New best! ${speedResult.correctCount} correct${speedResult.prevBest ? `, up from ${speedResult.prevBest.correctCount} 🎉` : ' 🎉'}` : `${speedResult.correctCount} correct (best so far: ${speedResult.prevBest.correctCount})`}</strong>
       </div>` : ''}
-      <div class="grid stat-grid" style="margin-bottom:8px">
-        ${breakdown.map(b => `
-          <div class="stat-card">
-            <strong>${b.correct}/${b.total}</strong>
-            <span>${escapeText(b.label)}</span>
-            <p class="small" style="margin:6px 0 0">${b.wrong ? `${b.wrong} wrong` : 'All correct'}</p>
-          </div>`).join('')}
+      <p class="small" style="text-align:center">Tap any question to see how it works.</p>
+      <div class="results-grid">
+        ${answers.map((a, i) => `<button class="result-box ${a.isCorrect ? 'correct' : 'wrong'}" data-explain="${i}">${i + 1}</button>`).join('')}
       </div>
       <div class="question-actions">
-        ${wrongCount ? `<button class="secondary" data-review-mistakes>Review ${wrongCount} mistake${wrongCount === 1 ? '' : 's'}</button>` : ''}
+        ${wrongCount ? `<button class="secondary" data-review-mistakes>🔍 Review ${wrongCount} mistake${wrongCount === 1 ? '' : 's'}</button>` : ''}
         <button class="primary cta-large" data-route="celebration">Finish</button>
       </div>
     </div>
+    ${viewing ? `
+      <div class="modal-overlay">
+        <div class="modal-card">
+          <h2>Question ${route.explainIndex + 1}: ${escapeText(viewing.prompt)}</h2>
+          <div class="review-grid">
+            <div class="review-cell"><span class="small">Your answer</span><h2>${escapeText(viewing.childAnswer)}</h2></div>
+            <div class="review-cell"><span class="small">Correct answer</span><h2>${escapeText(viewing.correctAnswer)}</h2></div>
+          </div>
+          <h3>Why?</h3>
+          <p>${escapeText(explain(viewing))}</p>
+          <button class="primary cta-large" style="margin-top:10px" data-close-explain>Close</button>
+        </div>
+      </div>
+    ` : ''}
   `);
   document.querySelector('[data-review-mistakes]')?.addEventListener('click', () => setRoute('review', { reviewIndex: 0 }));
+  document.querySelectorAll('[data-explain]').forEach(btn => btn.addEventListener('click', () => setRoute('results', { explainIndex: Number(btn.dataset.explain) })));
+  document.querySelector('[data-close-explain]')?.addEventListener('click', () => setRoute('results'));
 }
 // Walks through wrong answers only, one at a time -- a full grid of every
 // question (including the many correct ones) just made it harder to find
@@ -1815,7 +1894,7 @@ function review() {
   const item = items[idx];
   const explanation = explain(item);
   shell(html`
-    <div class="top-row"><h3>Mistake ${idx + 1} of ${items.length}</h3><div class="nav"><button class="secondary" data-speak="${escapeText(explanation)}">Hear</button>${authBadge()}</div></div>
+    <div class="top-row"><h3>Mistake ${idx + 1} of ${items.length}</h3><div class="nav"><button class="secondary" data-speak="${escapeText(explanation)}">🔊 Hear</button>${authBadge()}</div></div>
     <div class="question-main">
       <div class="review-box">
         <h2>Question: ${escapeText(item.prompt)}</h2>
@@ -1961,10 +2040,17 @@ function renderVisual(item) {
   if (q.visualType === 'digitalClock') return `<div class="visual-line"><strong>Remember</strong><p>Afternoon hours (1pm-11pm) = add 12 for 24-hour time. Morning hours stay the same, except 12am = 00:00.</p></div>`;
   return '';
 }
+// Drawing literally a*table dots (up to 12x12 = 144) blew the question
+// straight off the screen at higher tiers. Past a small threshold per
+// group, show a numeral chip instead of individually-drawn dots -- still
+// reads as "this many groups", just without rendering 144 emoji.
 function timesTableHtml(data = {}) {
   const a = data.a || 1;
   const table = data.table || 1;
-  return `<div class="pattern-row">${Array.from({ length: a }, () => `<span class="pattern-item" style="display:flex;gap:4px;flex-wrap:wrap;min-width:auto">${Array.from({ length: table }, () => '🔵').join('')}</span>`).join('')}</div>`;
+  const groupHtml = table <= 6
+    ? `<span style="display:flex;gap:3px;flex-wrap:wrap;min-width:auto">${Array.from({ length: table }, () => '🔵').join('')}</span>`
+    : `<strong style="font-size:1.1rem">${table}</strong>`;
+  return `<div class="pattern-row">${Array.from({ length: a }, () => `<span class="pattern-item" style="min-width:auto">${groupHtml}</span>`).join('')}</div>`;
 }
 function barModelSvg(data = {}) {
   const total = Math.max(1, data.total || (data.known || 0) + (data.unknown || 0));
@@ -2019,7 +2105,10 @@ function patternHtml(data = {}) {
 }
 function fractionOfAmountHtml(data = {}) {
   const { denom = 1, groupsPerPart = 1, numerator = 1 } = data;
-  return `<div class="pattern-row">${Array.from({ length: denom }, (_, i) => `<span class="pattern-item" style="display:flex;gap:4px;flex-wrap:wrap;min-width:auto;${i < numerator ? 'background:#ffe6a8;border-radius:8px;' : ''}">${Array.from({ length: groupsPerPart }, () => '🔵').join('')}</span>`).join('')}</div>`;
+  const groupHtml = groupsPerPart <= 6
+    ? `<span style="display:flex;gap:3px;flex-wrap:wrap;min-width:auto">${Array.from({ length: groupsPerPart }, () => '🔵').join('')}</span>`
+    : `<strong style="font-size:1.1rem">${groupsPerPart}</strong>`;
+  return `<div class="pattern-row">${Array.from({ length: denom }, (_, i) => `<span class="pattern-item" style="min-width:auto;${i < numerator ? 'background:#ffe6a8;border-radius:8px;' : ''}">${groupHtml}</span>`).join('')}</div>`;
 }
 function roundingHtml(n) {
   const lower = Math.floor(n / 10) * 10;

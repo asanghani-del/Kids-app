@@ -124,25 +124,49 @@ p { font-size: clamp(0.95rem, 1.2vw, 1.08rem); line-height: 1.42; color: var(--m
 .dot.current { outline: 2px solid var(--ink); outline-offset: 2px; }
 .dot.jumpable { cursor: pointer; }
 .question-wrap { height: 100%; display: flex; flex-direction: column; }
-.question-main { flex: 1; display: grid; align-content: center; justify-items: center; gap: clamp(8px, 1.4vh, 14px); text-align: center; min-height: 0; }
-.prompt { font-size: clamp(2.4rem, 7vw, 5.5rem); font-weight: 850; letter-spacing: -0.05em; }
+/* Top bar and the action row (Back/Hint/Next/Finish/Stop) must never be
+   the thing that gets squeezed or pushed off-screen -- only the middle
+   question content (prompt/visual/choices) is allowed to scroll
+   internally, and only as a last-resort safety net for unusually tall
+   content; in practice the dot/icon caps elsewhere keep that from firing. */
+.question-wrap > .top-row, .question-actions { flex-shrink: 0; }
+.question-main { flex: 1; display: grid; align-content: center; justify-items: center; gap: clamp(6px, 1.2vh, 12px); text-align: center; min-height: 0; overflow-y: auto; padding: 4px; }
+.prompt { font-size: clamp(2rem, 6vw, 4.6rem); font-weight: 850; letter-spacing: -0.05em; max-width: min(720px, 92%); }
+/* Word-problem prompts ("Tom has 2 packs of 5 stickers...") are full
+   sentences, not a short "2+2=?" -- the same giant equation font cut them
+   off mid-sentence. Long prompts get a much smaller, normal-weight size
+   instead, sized for reading rather than for a single bold number line. */
+.prompt.prompt-long { font-size: clamp(1.15rem, 2.6vw, 1.7rem); font-weight: 750; letter-spacing: normal; line-height: 1.35; }
 .answer-box { min-width: 160px; min-height: 60px; display: grid; place-items: center; font-size: 2rem; font-weight: 800; padding: 6px 24px; background: #fff; }
-.keypad { display: grid; grid-template-columns: repeat(3, minmax(72px, 104px)); gap: 12px; justify-content: center; }
-.key { min-height: 72px; font-size: 1.7rem; font-weight: 800; cursor: pointer; }
+.keypad { display: grid; grid-template-columns: repeat(3, minmax(72px, 104px)); gap: 10px; justify-content: center; }
+.key { min-height: 64px; font-size: 1.6rem; font-weight: 800; cursor: pointer; }
 .key.wide { grid-column: span 2; font-size: 1.05rem; }
-.ok-button { margin: 12px auto 0; }
-.question-actions { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
+.ok-button { margin: 10px auto 0; }
+.question-actions { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
 /* Forced 2 columns (not auto-fit) so 4 choices read as big square tap
    targets on a tablet, rather than a thin single row with lots of empty
    space above/below -- matches the same "big tablet tile" treatment as
    the home screen's mode cards. */
 .choices { display: grid; grid-template-columns: repeat(2, 1fr); width: min(620px, 100%); gap: 18px; }
+/* A 3-option set (e.g. A / B / Same) wrapping 2-then-1 reads as broken --
+   give it its own 3-column row so it always fits on one line. */
+.choices.choices-3 { grid-template-columns: repeat(3, 1fr); width: min(620px, 100%); }
 .choice { min-height: 120px; font-size: 2.1rem; font-weight: 850; cursor: pointer; }
 .choice:hover, .key:hover { border-color: var(--sage); }
 .hint-box, .review-box, .next-box { background: var(--blue); border-radius: 20px; padding: 14px 16px; border: 1px solid rgba(45, 83, 120, .12); }
 .review-box { background: white; text-align: left; width: min(780px, 100%); }
 .review-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px; margin: 10px 0 12px; }
 .review-cell { background: #f8f5ee; border-radius: 16px; padding: 12px; }
+/* Up to 25 questions (Speed Test's max) need to fit on one screen with no
+   scrolling -- small fixed-ish boxes that wrap into however many rows fit,
+   rather than one box per skill (the old design), so the whole lesson's
+   right/wrong pattern is visible at a glance and any question is one tap
+   away from its explanation. */
+.results-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(46px, 1fr)); gap: 8px; max-width: 640px; margin: 4px auto 8px; }
+.result-box { aspect-ratio: 1; min-height: 44px; border-radius: 10px; font-weight: 800; font-size: 1.05rem; border: none; cursor: pointer; color: white; }
+.result-box.correct { background: var(--sage); }
+.result-box.wrong { background: #c75446; }
+.result-box:hover, .result-box:focus-visible { transform: translateY(-2px); outline: none; }
 .visual-line { width: min(700px, 100%); padding: 18px; background: #fbf7ef; border-radius: 24px; }
 .number-line { display: flex; justify-content: space-between; align-items: end; gap: 4px; margin-top: 10px; }
 .tick { display: grid; gap: 5px; justify-items: center; color: var(--muted); }
@@ -307,7 +331,23 @@ p { font-size: clamp(0.95rem, 1.2vw, 1.08rem); line-height: 1.42; color: var(--m
   transform: translateY(-2px); border-color: var(--sage); outline: none;
 }
 .topic-grid { grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); margin-top: 8px; }
-.stepping-path { display: flex; align-items: center; overflow-x: auto; overflow-y: visible; gap: 2px; padding: 18px 4px 40px; }
+/* Skills Area / Speed Test topic tiles were the same small size as plain
+   text buttons -- too small to tap confidently and gave pre-readers no
+   non-text cue what each topic was. Bigger tiles with a topic icon fix
+   both; 3 columns keeps 9 topics + Mixed fitting in 3-4 rows on one
+   screen rather than spreading thin across the full width. */
+.topic-grid-big { grid-template-columns: repeat(3, 1fr); gap: 14px; margin-top: 14px; }
+.topic-card-big { min-height: 120px; padding: 16px; justify-content: center; align-items: center; text-align: center; gap: 6px; }
+.topic-icon { font-size: 2.4rem; line-height: 1; }
+/* This badge is the main "look how far you've come" moment for the
+   Learning Progression page -- it was a one-line small-text caption
+   easily missed in the corner; now it's the visual anchor near where the
+   Start button used to sit, with the Start button itself pushed down
+   below it. */
+.progression-badge { display: flex; align-items: center; gap: 18px; justify-content: center; margin: 18px 0; }
+.progression-emoji { font-size: 5rem; line-height: 1; }
+.progression-name { font-size: 2rem; }
+.stepping-path { display: flex; align-items: center; justify-content: center; overflow-x: auto; overflow-y: visible; gap: 2px; padding: 18px 4px 40px; }
 .stone-group { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
 .stone {
   width: 56px; height: 56px; border-radius: 50%; flex-shrink: 0;
