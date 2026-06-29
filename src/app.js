@@ -67,9 +67,14 @@ function handleAuthChange(user) {
       // progress. Merge field-by-field against whatever this device
       // already has in memory, then push the merged result back to the
       // cloud so both devices converge on the same, more-complete profile.
+      // While admin test mode is on, state.profiles holds the sandbox
+      // profile, not the real one -- the real snapshot is parked in the
+      // stash and applied once admin mode exits, instead of overwriting
+      // the sandbox or getting merged against it.
       const incoming = children.slice(0, 1);
-      state.profiles = incoming.map(remote => {
-        const local = state.profiles.find(p => p.id === remote.id);
+      const target = state.adminMode ? state._stash : state;
+      target.profiles = incoming.map(remote => {
+        const local = target.profiles.find(p => p.id === remote.id);
         if (!local) return remote;
         const merged = mergeProfiles(local, remote);
         if (JSON.stringify(merged) !== JSON.stringify(remote)) {
@@ -77,21 +82,27 @@ function handleAuthChange(user) {
         }
         return merged;
       });
-      if (!state.profiles.find(p => p.id === state.currentProfileId)) {
-        state.currentProfileId = state.profiles[0]?.id || null;
+      if (!target.profiles.find(p => p.id === target.currentProfileId)) {
+        target.currentProfileId = target.profiles[0]?.id || null;
       }
       saveState();
       if (!sawChildrenYet) {
         sawChildrenYet = true;
         // First snapshot after sign-in tells us whether this account has
         // already set up its one learner, or needs to do that now.
-        setRoute(state.profiles.length ? 'home' : 'createProfile');
+        if (!state.adminMode) setRoute(target.profiles.length ? 'home' : 'createProfile');
       } else {
         render();
       }
     }),
-    subscribeAttempts(user.uid, attempts => { state.attempts = attempts; saveState(); render(); }),
-    subscribeLessonSummaries(user.uid, summaries => { state.lessonSummaries = summaries; saveState(); render(); })
+    subscribeAttempts(user.uid, attempts => {
+      if (state.adminMode) { state._stash.attempts = attempts; saveState(); return; }
+      state.attempts = attempts; saveState(); render();
+    }),
+    subscribeLessonSummaries(user.uid, summaries => {
+      if (state.adminMode) { state._stash.lessonSummaries = summaries; saveState(); return; }
+      state.lessonSummaries = summaries; saveState(); render();
+    })
   ]).then(unsubs => { cloudUnsubscribers = unsubs; });
 }
 
@@ -108,7 +119,12 @@ function loadState() {
     // authentication (e.g. account access, payments, data export to a server).
     parentPin: '1234',
     contentVersion: 1,
-    currentProfileId: null
+    currentProfileId: null,
+    adminMode: false,
+    sandboxProfile: null,
+    sandboxAttempts: [],
+    sandboxLessonSummaries: [],
+    _stash: null
   };
   if (!saved) return defaults;
   try {
@@ -240,7 +256,7 @@ function speak(text) {
 
 function render() {
   if (!seed) return;
-  const screens = { signIn, resetPassword, createProfile, home, modeSelect, skillsArea, learningZone, timesTablesHub, speedTestSetup, lesson, results, review, celebration, parentGate, parentDashboard, sessionDetail };
+  const screens = { signIn, resetPassword, createProfile, home, learningProgressionPath, skillsArea, learningZone, timesTablesHub, fractionsLibrary, numberBondsChart, moneyReference, speedTestSetup, lesson, results, review, celebration, parentGate, parentDashboard, sessionDetail, adminLogin };
   screens[route.screen]?.();
 }
 
@@ -328,76 +344,57 @@ function createProfile() {
     state.profiles = [profile];
     state.currentProfileId = profile.id;
     saveState();
-    if (cloudUser) saveChildCloud(cloudUser.uid, profile).catch(() => {});
+    if (cloudWritesEnabled()) saveChildCloud(cloudUser.uid, profile).catch(() => {});
     setRoute('home');
   });
 }
 
-function home() {
-  if (!state.profiles.length) return setRoute('createProfile');
-  const profile = currentProfile();
-  const completedCount = state.lessonSummaries.filter(l => l.childId === profile.id).length;
-  const nextLessonNumber = completedCount + 1;
-  const skills = eligibleSkills(profile);
-  const masteryEntries = Object.entries(profile.mastery || {});
-  const level = profile.microLevel || 1;
-  const tierEntries = Object.entries(profile.skillTiers || {});
-  shell(html`
-    <div class="top-row"><div></div><div class="nav"><button class="ghost" data-route="parentGate">Parent Area</button>${statusPill()}${authBadge()}</div></div>
-    <h1>Hello, ${escapeText(profile.name)}</h1>
-    <div class="rewards-row">
-      <span class="reward-chip">🔥 ${profile.streak?.count || 0}-day streak</span>
-      <span class="reward-chip">⭐ ${profile.totalPoints || 0} points</span>
-      ${(profile.badgesEarned || []).length ? `<span class="reward-chip">🏅 ${profile.badgesEarned.length} badge${profile.badgesEarned.length === 1 ? '' : 's'}</span>` : ''}
-    </div>
-    <div class="level-banner"><strong>Level ${level} of ${MAX_TIER}</strong><span class="small">Computed from real lesson results — not a label anyone typed in.</span></div>
-    <p>Lesson ${nextLessonNumber} is ready. We will practise ${skills.map(s => s.label.toLowerCase()).join(', ')}.</p>
-    <button class="primary cta-large" data-route="modeSelect">Start Lesson ${nextLessonNumber}</button>
-    <h3>Progress</h3>
-    <p class="small">${completedCount} lesson${completedCount === 1 ? '' : 's'} completed so far.</p>
-    ${tierEntries.length ? `<div class="tier-chip-row">${tierEntries.map(([id, t]) => `<span class="tier-chip">${escapeText(SKILL_DEFS.find(s => s.id === id)?.label || id)}: tier ${t}</span>`).join('')}</div>` : ''}
-    <div class="grid stat-grid" style="margin-top:12px">
-      ${masteryEntries.length ? masteryEntries.map(([id, v]) => `<div class="stat-card"><strong>${skillScore(profile.id, id).label}</strong><span>${escapeText(skillLabelForMicroId(id))}</span></div>`).join('') : '<div class="stat-card"><strong>—</strong><span>No lessons yet</span></div>'}
-    </div>
-  `);
-}
-// A child landing on four mode cards with no context tends to just tap the
-// first one every time. A one-time, kid-friendly walkthrough on first visit
-// (re-openable anytime via "What do these mean?") gives each mode a clear
-// "when would I pick this" reason rather than relying on the one-line blurb
-// alone. `profile.seenModeIntro` persists the "first visit" dismissal;
-// `route.showIntro` lets it be reopened deliberately without re-triggering
-// every time.
+// Home *is* the mode-select screen now -- a separate "Start Lesson" holding
+// page with per-skill stat boxes duplicated the parent dashboard's own
+// breakdown and added an extra tap before a child could actually do
+// anything. Greeting/streak/points stay (they're motivational, kid-facing),
+// but the numeric "Level X of 12" is replaced with the animal badge below;
+// the raw tier number is parent-area-only now (see parentDashboard).
 const MODE_INTRO = [
   { icon: '📚', label: 'Learning Progression', text: "Your everyday lesson — a mix of everything, at just the right level for you." },
   { icon: '⏱️', label: 'Speed Test', text: 'Quick-fire questions against the clock — great for when you want to beat your best score!' },
   { icon: '🎯', label: 'Skills Area', text: "Stuck on something, like fractions or times tables? Pick it here and practise just that." },
   { icon: '🧩', label: 'Learning Zone', text: 'A place to look things up and learn, like the times tables grid, before you get tested on them.' }
 ];
-function modeSelect() {
+function home() {
+  if (!state.profiles.length) return setRoute('createProfile');
   const profile = currentProfile();
+  const animal = animalForTier(profile.microLevel || 1);
   const showIntro = route.showIntro || !profile?.seenModeIntro;
   shell(html`
-    <div class="top-row"><button class="ghost" data-route="home">Back</button><div class="nav">${authBadge()}</div></div>
-    <h1>How do you want to practise?</h1>
+    <div class="home-wrap">
+    <div class="top-row"><div></div><div class="nav">${state.adminMode ? '<span class="badge" style="background:#f4d35e">🧪 Admin test mode</span><button class="ghost" data-exit-admin>Exit</button>' : ''}<button class="ghost" data-route="parentGate">Parent Area</button>${statusPill()}${authBadge()}</div></div>
+    <h1>Hello, ${escapeText(profile.name)}</h1>
+    <div class="rewards-row">
+      <span class="reward-chip">${animal.emoji} ${escapeText(animal.name)}</span>
+      <span class="reward-chip">🔥 ${profile.streak?.count || 0}-day streak</span>
+      <span class="reward-chip">⭐ ${profile.totalPoints || 0} points</span>
+      ${(profile.badgesEarned || []).length ? `<span class="reward-chip">🏅 ${profile.badgesEarned.length} badge${profile.badgesEarned.length === 1 ? '' : 's'}</span>` : ''}
+    </div>
     ${showIntro ? '' : html`<button class="link-button" data-show-intro style="margin-bottom:10px">What do these mean?</button>`}
     <div class="grid mode-grid">
-      <button class="mode-card" data-start-progression>
-        <strong>Learning Progression</strong>
-        <span class="small">A mixed set of 20 questions at your level, across everything.</span>
+      <button class="mode-card" data-route="learningProgressionPath">
+        <strong>📚 Learning Progression</strong>
+        <span class="small">Your next lesson</span>
       </button>
       <button class="mode-card" data-route="speedTestSetup">
-        <strong>Speed Test</strong>
-        <span class="small">Quick-fire questions against the clock. Beat your last score!</span>
+        <strong>⏱️ Speed Test</strong>
+        <span class="small">Beat the clock</span>
       </button>
       <button class="mode-card" data-route="skillsArea">
-        <strong>Skills Area</strong>
-        <span class="small">Pick one topic to focus on and practise just that.</span>
+        <strong>🎯 Skills Area</strong>
+        <span class="small">Pick a topic</span>
       </button>
       <button class="mode-card" data-route="learningZone">
-        <strong>Learning Zone</strong>
-        <span class="small">Explore times tables, look up facts, and practise one number at a time.</span>
+        <strong>🧩 Learning Zone</strong>
+        <span class="small">Look things up</span>
       </button>
+    </div>
     </div>
     ${showIntro ? html`
       <div class="modal-overlay">
@@ -411,17 +408,55 @@ function modeSelect() {
       </div>
     ` : ''}
   `);
-  document.querySelector('[data-start-progression]').addEventListener('click', startLesson);
   document.querySelector('[data-dismiss-intro]')?.addEventListener('click', () => {
     if (profile) {
       profile.seenModeIntro = true;
       profile.updatedAt = Date.now();
       saveState();
-      if (cloudUser) saveChildCloud(cloudUser.uid, profile).catch(() => {});
+      if (cloudWritesEnabled()) saveChildCloud(cloudUser.uid, profile).catch(() => {});
     }
-    setRoute('modeSelect');
+    setRoute('home');
   });
-  document.querySelector('[data-show-intro]')?.addEventListener('click', () => setRoute('modeSelect', { showIntro: true }));
+  document.querySelector('[data-show-intro]')?.addEventListener('click', () => setRoute('home', { showIntro: true }));
+  document.querySelector('[data-exit-admin]')?.addEventListener('click', exitAdminMode);
+}
+// A simple, fun "path" visualisation for Learning Progression: stepping
+// stones for a window of lesson numbers around the next one, joined by a
+// different mode-of-transport emoji each gap (purely decorative variety),
+// with the child's current animal badge sitting on today's stone. Replaces
+// jumping straight from the mode card into the lesson with no context, and
+// doubles as the "did I pick the wrong mode?" Back point requested.
+const TRANSPORT_EMOJI = ['🚲', '⛵', '🚂', '✈️', '🚀', '🎈'];
+function learningProgressionPath() {
+  const profile = currentProfile();
+  const completedCount = state.lessonSummaries.filter(l => l.childId === profile.id).length;
+  const nextLessonNumber = completedCount + 1;
+  const animal = animalForTier(profile.microLevel || 1);
+  const start = Math.max(1, nextLessonNumber - 3);
+  const end = nextLessonNumber + 3;
+  const stones = [];
+  for (let n = start; n <= end; n++) stones.push(n);
+  shell(html`
+    <div class="top-row"><button class="ghost" data-route="home">Back</button><div class="nav">${authBadge()}</div></div>
+    <h1>Learning Progression</h1>
+    <p class="small">${animal.emoji} ${escapeText(animal.name)}</p>
+    <div class="stepping-path">
+      ${stones.map((n, i) => {
+        const isDone = n < nextLessonNumber;
+        const isCurrent = n === nextLessonNumber;
+        const isFuture = n > nextLessonNumber;
+        return `<div class="stone-group">
+          <div class="stone ${isDone ? 'done' : ''} ${isCurrent ? 'current' : ''} ${isFuture ? 'future' : ''}">
+            ${isCurrent ? animal.emoji : (isDone ? '✓' : n)}
+            <span class="stone-label">${isFuture ? 'Lesson ' + n : (isCurrent ? 'Today' : 'Lesson ' + n)}</span>
+          </div>
+          ${i < stones.length - 1 ? `<span class="transport">${TRANSPORT_EMOJI[i % TRANSPORT_EMOJI.length]}</span>` : ''}
+        </div>`;
+      }).join('')}
+    </div>
+    <button class="primary cta-large" data-start-progression>Start Lesson ${nextLessonNumber}</button>
+  `);
+  document.querySelector('[data-start-progression]').addEventListener('click', startLesson);
 }
 
 // Learning Zone: a reference-and-practice hub, distinct from the other
@@ -431,35 +466,48 @@ function modeSelect() {
 // as locked placeholders so the mode reads as a real section that'll grow,
 // not a one-off times-tables screen.
 const LEARNING_ZONE_TOPICS = [
-  { id: 'times_tables', label: 'Times Tables', blurb: 'Look up any table and practise one number at a time.', route: 'timesTablesHub' }
+  { id: 'times_tables', label: 'Times Tables', icon: '✖️', route: 'timesTablesHub' },
+  { id: 'fractions', label: 'Fractions', icon: '🍕', route: 'fractionsLibrary' },
+  { id: 'number_bonds', label: 'Number Bonds', icon: '🔗', route: 'numberBondsChart' },
+  { id: 'money', label: 'Money', icon: '💰', route: 'moneyReference' }
 ];
 function learningZone() {
   shell(html`
-    <div class="top-row"><button class="ghost" data-route="modeSelect">Back</button><div class="nav">${authBadge()}</div></div>
+    <div class="top-row"><button class="ghost" data-route="home">Back</button><div class="nav">${authBadge()}</div></div>
     <h1>Learning Zone</h1>
-    <p>Pick something to explore and practise.</p>
-    <div class="grid topic-grid">
-      ${LEARNING_ZONE_TOPICS.map(t => `<button class="topic-card" data-zone-topic="${t.id}">
-        <strong>${escapeText(t.label)}</strong>
-        <span class="small">${escapeText(t.blurb)}</span>
+    <div class="grid mode-grid">
+      ${LEARNING_ZONE_TOPICS.map(t => `<button class="mode-card" data-zone-topic="${t.id}">
+        <strong>${t.icon} ${escapeText(t.label)}</strong>
       </button>`).join('')}
-      <button class="topic-card" disabled style="opacity:0.45">
-        <strong>More coming soon</strong>
-        <span class="small">Division, fractions and more learning resources are on the way.</span>
-      </button>
     </div>
   `);
   document.querySelectorAll('[data-zone-topic]').forEach(btn => {
     btn.addEventListener('click', () => setRoute(LEARNING_ZONE_TOPICS.find(t => t.id === btn.dataset.zoneTopic).route));
   });
 }
+function timesTablesGridHtml(quizMode) {
+  const nums = Array.from({ length: 12 }, (_, i) => i + 1);
+  return `<div class="times-grid-wrap"><table class="times-grid">
+    <thead><tr><th></th>${nums.map(n => `<th>${n}</th>`).join('')}</tr></thead>
+    <tbody>${nums.map(r => `<tr><th>${r}</th>${nums.map(c => {
+      const val = r * c;
+      return quizMode ? `<td class="grid-hidden" data-answer="${val}">?</td>` : `<td>${val}</td>`;
+    }).join('')}</tr>`).join('')}</tbody>
+  </table></div>`;
+}
 function timesTablesHub() {
   const profile = currentProfile();
   const selected = route.factor || null;
+  const showGrid = !!route.showGrid;
+  const quizMode = !!route.quizMode;
   shell(html`
     <div class="top-row"><button class="ghost" data-route="learningZone">Back</button><div class="nav">${authBadge()}</div></div>
     <h1>Times Tables</h1>
-    <p>Tap a number to see its table, then practise it.</p>
+    <div class="nav" style="margin-bottom:12px">
+      <button class="secondary" data-toggle-grid>${showGrid ? 'Hide' : 'Show'} grid</button>
+      ${showGrid ? `<button class="secondary" data-toggle-quiz>${quizMode ? 'Show all answers' : 'Hide answers (quiz me!)'}</button>` : ''}
+    </div>
+    ${showGrid ? timesTablesGridHtml(quizMode) : ''}
     <div class="grid" style="grid-template-columns:repeat(6,1fr);gap:8px;margin-bottom:14px">
       ${Array.from({ length: 12 }, (_, i) => i + 1).map(n => `<button class="topic-card ${selected === n ? 'selected' : ''}" style="padding:10px 4px" data-factor="${n}" aria-pressed="${selected === n}">
         <strong>${n}×</strong>
@@ -475,12 +523,118 @@ function timesTablesHub() {
       </div>
     ` : ''}
   `);
+  document.querySelector('[data-toggle-grid]').addEventListener('click', () => setRoute('timesTablesHub', { factor: selected, showGrid: !showGrid, quizMode }));
+  document.querySelector('[data-toggle-quiz]')?.addEventListener('click', () => setRoute('timesTablesHub', { factor: selected, showGrid, quizMode: !quizMode }));
   document.querySelectorAll('[data-factor]').forEach(btn => {
-    btn.addEventListener('click', () => setRoute('timesTablesHub', { factor: Number(btn.dataset.factor) }));
+    btn.addEventListener('click', () => setRoute('timesTablesHub', { factor: Number(btn.dataset.factor), showGrid, quizMode }));
   });
   const practiceBtn = document.querySelector('[data-practice-factor]');
   if (practiceBtn) practiceBtn.addEventListener('click', () => startFactorPractice(Number(practiceBtn.dataset.practiceFactor)));
+  // Revealing an answer is a direct DOM tweak rather than a full render()
+  // -- a re-render would be triggered by every single tap for a purely
+  // decorative 3-second peek, and would also wipe out anyone else's
+  // in-progress reveal timers elsewhere in the grid.
+  document.querySelectorAll('.grid-hidden[data-answer]').forEach(td => {
+    td.addEventListener('click', () => {
+      if (td.classList.contains('revealed')) return;
+      td.textContent = td.dataset.answer;
+      td.classList.add('revealed');
+      setTimeout(() => {
+        td.textContent = '?';
+        td.classList.remove('revealed');
+      }, 3000);
+    });
+  });
   void profile;
+}
+// A reference library a parent can sit and teach from -- every denominator
+// 2-12 shown as a row of fraction circles (1/n through n/n), reusing the
+// same fractionCircleSvg renderer questions already use, so what's taught
+// here visually matches what shows up in lesson questions later.
+const FRACTION_DENOMS = [2, 3, 4, 5, 6, 8, 10, 12];
+function fractionsLibrary() {
+  const selected = route.denom || null;
+  shell(html`
+    <div class="top-row"><button class="ghost" data-route="learningZone">Back</button><div class="nav">${authBadge()}</div></div>
+    <h1>Fractions</h1>
+    <div class="grid" style="grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:14px">
+      ${FRACTION_DENOMS.map(d => `<button class="topic-card ${selected === d ? 'selected' : ''}" style="padding:10px 4px" data-denom="${d}">
+        <strong>${d === 2 ? 'Halves' : d === 3 ? 'Thirds' : d === 4 ? 'Quarters' : `${d}ths`}</strong>
+      </button>`).join('')}
+    </div>
+    ${selected ? `
+      <div class="dashboard-card">
+        <h2>${selected === 2 ? 'Halves' : selected === 3 ? 'Thirds' : selected === 4 ? 'Quarters' : `${selected}ths`}</h2>
+        <div class="grid" style="grid-template-columns:repeat(auto-fit, minmax(110px, 1fr));gap:14px;margin-bottom:14px;text-align:center">
+          ${Array.from({ length: selected }, (_, i) => i + 1).map(n => `<div>
+            <div style="width:90px;height:90px;margin:0 auto">${fractionCircleSvg(selected, n)}</div>
+            <strong>${n}/${selected}</strong>
+          </div>`).join('')}
+        </div>
+        <button class="primary cta-large" data-practice-skill="fractions_visual">Practise fractions</button>
+      </div>
+    ` : ''}
+  `);
+  document.querySelectorAll('[data-denom]').forEach(btn => {
+    btn.addEventListener('click', () => setRoute('fractionsLibrary', { denom: Number(btn.dataset.denom) }));
+  });
+  document.querySelector('[data-practice-skill]')?.addEventListener('click', e => startSkillPractice(e.target.dataset.practiceSkill));
+}
+// Bonds to 10 and bonds to 20 as a flip-card style wall chart -- quiz mode
+// hides the second addend (tap to reveal for 3s), same interaction as the
+// times-tables grid's quiz mode, so the two reference tools feel consistent.
+function numberBondsChart() {
+  const target = route.bondsTo || 10;
+  const quizMode = !!route.quizMode;
+  const rows = Array.from({ length: target - 1 }, (_, i) => i + 1);
+  shell(html`
+    <div class="top-row"><button class="ghost" data-route="learningZone">Back</button><div class="nav">${authBadge()}</div></div>
+    <h1>Number Bonds</h1>
+    <div class="nav" style="margin-bottom:12px">
+      <button class="secondary ${target === 10 ? 'selected' : ''}" data-bonds="10">Bonds to 10</button>
+      <button class="secondary ${target === 20 ? 'selected' : ''}" data-bonds="20">Bonds to 20</button>
+      <button class="secondary" data-toggle-quiz>${quizMode ? 'Show all answers' : 'Hide answers (quiz me!)'}</button>
+    </div>
+    <div class="grid" style="grid-template-columns:repeat(auto-fit, minmax(140px, 1fr));gap:8px;margin-bottom:14px">
+      ${rows.map(n => `<div class="nudge-row" style="text-align:center">${n} + ${quizMode ? `<span class="grid-hidden" data-answer="${target - n}">?</span>` : (target - n)} = ${target}</div>`).join('')}
+    </div>
+    <button class="primary cta-large" data-practice-skill="${target === 10 ? 'number_bonds_to_10' : 'number_bonds_to_20'}">Practise number bonds</button>
+  `);
+  document.querySelectorAll('[data-bonds]').forEach(btn => {
+    btn.addEventListener('click', () => setRoute('numberBondsChart', { bondsTo: Number(btn.dataset.bonds), quizMode }));
+  });
+  document.querySelector('[data-toggle-quiz]').addEventListener('click', () => setRoute('numberBondsChart', { bondsTo: target, quizMode: !quizMode }));
+  document.querySelector('[data-practice-skill]').addEventListener('click', e => startSkillPractice(e.target.dataset.practiceSkill));
+  document.querySelectorAll('.grid-hidden[data-answer]').forEach(span => {
+    span.addEventListener('click', () => {
+      if (span.classList.contains('revealed')) return;
+      span.textContent = span.dataset.answer;
+      span.classList.add('revealed');
+      setTimeout(() => { span.textContent = '?'; span.classList.remove('revealed'); }, 3000);
+    });
+  });
+}
+// UK coin reference -- every coin a child will see in money questions,
+// shown at once as a simple lookup chart for a parent to point at and name.
+function moneyReference() {
+  shell(html`
+    <div class="top-row"><button class="ghost" data-route="learningZone">Back</button><div class="nav">${authBadge()}</div></div>
+    <h1>Money</h1>
+    <div class="coin-row" style="flex-wrap:wrap;gap:14px;margin-bottom:18px">
+      ${COINS.map(c => `<span class="coin" style="font-size:1.3rem;padding:18px 22px">${c >= 100 ? '£' + c / 100 : c + 'p'}</span>`).join('')}
+    </div>
+    <div class="dashboard-card">
+      <h2>Ways to make 50p</h2>
+      <div class="grid" style="gap:6px">
+        <div class="nudge-row">50p = one 50p coin</div>
+        <div class="nudge-row">50p = two 20p + one 10p</div>
+        <div class="nudge-row">50p = five 10p coins</div>
+        <div class="nudge-row">50p = ten 5p coins</div>
+      </div>
+    </div>
+    <button class="primary cta-large" style="margin-top:14px" data-practice-skill="uk_money_total">Practise money</button>
+  `);
+  document.querySelector('[data-practice-skill]').addEventListener('click', e => startSkillPractice(e.target.dataset.practiceSkill));
 }
 function startFactorPractice(factor) {
   const profile = currentProfile();
@@ -505,6 +659,35 @@ function startFactorPractice(factor) {
     skillFilter: 'times_tables',
     factorFilter: factor,
     topicLevelBefore: topicLevel(profile, 'multiplication_division')
+  };
+  setRoute('lesson');
+}
+// Shared by every Learning Zone "Practise this" button (fractions, number
+// bonds, money, ...) -- pins a 10-question session to exactly one skill,
+// same shape as startFactorPractice but without a factor pin.
+function startSkillPractice(skillId) {
+  const profile = currentProfile();
+  const lessonNumber = state.lessonSummaries.filter(l => l.childId === profile.id).length + 1;
+  const topicId = topicForSkill(skillId);
+  lessonSession = {
+    id: `lesson-${Date.now()}`,
+    lessonNumber,
+    childId: profile.id,
+    startedAt: new Date().toISOString(),
+    index: 0,
+    maxIndexReached: 0,
+    totalQuestions: 10,
+    answers: [],
+    questions: [],
+    tierBySkill: {},
+    streakBySkill: {},
+    skillCursor: 0,
+    keypad: '',
+    hintOpen: false,
+    questionStartedAt: performance.now(),
+    topicFilter: topicId,
+    skillFilter: skillId,
+    topicLevelBefore: topicLevel(profile, topicId)
   };
   setRoute('lesson');
 }
@@ -536,16 +719,16 @@ function startLesson() {
 function skillsArea() {
   const profile = currentProfile();
   shell(html`
-    <div class="top-row"><button class="ghost" data-route="modeSelect">Back</button><div class="nav">${authBadge()}</div></div>
+    <div class="top-row"><button class="ghost" data-route="home">Back</button><div class="nav">${authBadge()}</div></div>
     <h1>Skills Area</h1>
-    <p>Pick a topic to practise. Topics that need more work are flagged.</p>
     <div class="grid topic-grid">
       ${TOPIC_DEFS.map(t => {
         const level = topicLevel(profile, t.id);
         const needsWork = topicLevel(profile, t.id, { onlyEligible: true }) < 3;
+        const animal = animalForTier(level);
         return `<button class="topic-card ${needsWork ? 'needs-work' : ''}" data-topic="${t.id}">
           <strong>${escapeText(t.label)}</strong>
-          <span class="small">Level ${level} of ${MAX_TIER}</span>
+          <span class="small">${animal.emoji} ${escapeText(animal.name)}</span>
           ${needsWork ? '<span class="topic-flag">Needs practice</span>' : ''}
         </button>`;
       }).join('')}
@@ -580,13 +763,12 @@ function startTopicSession(topicId) {
 
 function speedTestSetup() {
   shell(html`
-    <div class="top-row"><button class="ghost" data-route="modeSelect">Back</button><div class="nav">${authBadge()}</div></div>
+    <div class="top-row"><button class="ghost" data-route="home">Back</button><div class="nav">${authBadge()}</div></div>
     <h1>Speed Test</h1>
-    <p>25 questions, ${SPEED_QUESTION_MS / 1000} seconds each. Answer as many as you can before time runs out!</p>
+    <p class="small">${SPEED_QUESTION_MS / 1000}s per question</p>
     <div class="grid topic-grid">
       <button class="topic-card" data-speed-topic="">
         <strong>Mixed</strong>
-        <span class="small">A bit of everything you've unlocked.</span>
       </button>
       ${TOPIC_DEFS.map(t => `<button class="topic-card" data-speed-topic="${t.id}"><strong>${escapeText(t.label)}</strong></button>`).join('')}
     </div>
@@ -1021,6 +1203,26 @@ function topicLevel(profile, topicId, { onlyEligible = false } = {}) {
   return Math.round(tiers.reduce((sum, t) => sum + t, 0) / tiers.length);
 }
 function clampTier(t) { return Math.max(1, Math.min(MAX_TIER, t || 1)); }
+// The 1-12 tier scale is an internal engine detail (it drives which number
+// ranges/brackets a question is built from) -- showing "Level 8 of 12" to a
+// child reads as an arbitrary, slightly discouraging stopping point. This
+// maps the same scale to a fun, ascending animal+alliteration badge instead;
+// the raw numeric tier stays available to parents only (parentDashboard).
+const ANIMAL_TIERS = [
+  { tier: 1, name: 'Curious Caterpillar', emoji: '🐛' },
+  { tier: 2, name: 'Plucky Penguin', emoji: '🐧' },
+  { tier: 3, name: 'Bouncy Bunny', emoji: '🐰' },
+  { tier: 4, name: 'Speedy Squirrel', emoji: '🐿️' },
+  { tier: 5, name: 'Clever Chameleon', emoji: '🦎' },
+  { tier: 6, name: 'Daring Dolphin', emoji: '🐬' },
+  { tier: 7, name: 'Mighty Meerkat', emoji: '🦦' },
+  { tier: 8, name: 'Inquisitive Owl', emoji: '🦉' },
+  { tier: 9, name: 'Brave Badger', emoji: '🦡' },
+  { tier: 10, name: 'Wise Wolf', emoji: '🐺' },
+  { tier: 11, name: 'Soaring Eagle', emoji: '🦅' },
+  { tier: 12, name: 'Legendary Lion', emoji: '🦁' }
+];
+function animalForTier(tier) { return ANIMAL_TIERS[clampTier(tier) - 1]; }
 
 // --- Streaks, points and badges --------------------------------------------
 // A lightweight motivation layer that sits entirely on top of the existing
@@ -1428,7 +1630,7 @@ function submitAnswer(q, rawAnswer) {
   // double-apply the tier bump/drop a second time.
   if (!wasAlreadyAnswered) updateAdaptive(lessonSession, q, isCorrect);
   saveState();
-  if (cloudUser) saveAttemptCloud(cloudUser.uid, attempt).catch(() => {});
+  if (cloudWritesEnabled()) saveAttemptCloud(cloudUser.uid, attempt).catch(() => {});
   lessonSession.keypad = '';
   lessonSession.hintOpen = false;
   lessonSession.questionStartedAt = performance.now();
@@ -1532,7 +1734,7 @@ function finishLesson() {
   profile.updatedAt = Date.now();
   state.lessonSummaries.push(summary);
   saveState();
-  if (cloudUser) {
+  if (cloudWritesEnabled()) {
     saveLessonSummaryCloud(cloudUser.uid, summary).catch(() => {});
     saveChildCloud(cloudUser.uid, profile).catch(() => {});
   }
@@ -1876,13 +2078,83 @@ function parentGate() {
       <input class="field" type="password" inputmode="numeric" id="pin" aria-label="Parent PIN">
       <button class="primary" data-unlock>Unlock</button>
       <p class="small" id="pin-error"></p>
+      ${state.adminMode ? '<button class="ghost" data-exit-admin>Exit admin test mode</button>' : '<button class="link-button" data-route="adminLogin" style="width:fit-content">Admin test mode</button>'}
     </div>
   `);
   document.querySelector('[data-unlock]').addEventListener('click', () => {
     if (document.querySelector('#pin').value === state.parentPin) setRoute('parentDashboard');
     else document.querySelector('#pin-error').textContent = 'That PIN did not match.';
   });
+  document.querySelector('[data-exit-admin]')?.addEventListener('click', exitAdminMode);
 }
+// A way to click through the app (start lessons, answer questions, check
+// screens) without it counting against a real child's progress or syncing
+// anywhere -- swaps in a separate, local-only sandbox profile/attempts/
+// lessonSummaries for as long as admin mode is on, then restores the real
+// ones untouched on exit. This is a fixed demo login (not real auth) since
+// its only purpose is letting the app's owner poke at it safely.
+function adminLogin() {
+  shell(html`
+    <div class="top-row"><button class="ghost" data-route="parentGate">Back</button></div>
+    <h1>Admin test mode</h1>
+    <p>Try the app without affecting any child's real progress. A separate test profile is used instead, and nothing in this mode syncs to the cloud.</p>
+    <div class="grid" style="max-width:380px">
+      <label class="small">Username<input class="field" id="admin-username" autocomplete="off"></label>
+      <label class="small">Password<input class="field" type="password" id="admin-password"></label>
+      <p class="small" id="admin-error"></p>
+      <button class="primary cta-large" data-admin-login>Enter test mode</button>
+    </div>
+  `);
+  document.querySelector('[data-admin-login]').addEventListener('click', () => {
+    const username = document.querySelector('#admin-username').value.trim();
+    const password = document.querySelector('#admin-password').value;
+    if (username === 'admin' && password === '1234') enterAdminMode();
+    else document.querySelector('#admin-error').textContent = 'Incorrect username or password.';
+  });
+}
+function enterAdminMode() {
+  state._stash = {
+    profiles: state.profiles,
+    attempts: state.attempts,
+    lessonSummaries: state.lessonSummaries,
+    currentProfileId: state.currentProfileId
+  };
+  if (!state.sandboxProfile) {
+    state.sandboxProfile = { id: 'admin-sandbox', name: 'Admin Test', avatar: '🧪', stage: 'Test', microLevel: 1, mastery: {}, skillTiers: {} };
+  }
+  state.sandboxAttempts = state.sandboxAttempts || [];
+  state.sandboxLessonSummaries = state.sandboxLessonSummaries || [];
+  state.profiles = [state.sandboxProfile];
+  state.attempts = state.sandboxAttempts;
+  state.lessonSummaries = state.sandboxLessonSummaries;
+  state.currentProfileId = state.sandboxProfile.id;
+  state.adminMode = true;
+  saveState();
+  setRoute('home');
+}
+function exitAdminMode() {
+  // state.profiles/attempts/lessonSummaries currently *are* the sandbox
+  // arrays by reference, so re-pointing the sandbox* fields at them first
+  // keeps any progress made during this session before swapping back to
+  // the stashed real data.
+  state.sandboxProfile = state.profiles[0];
+  state.sandboxAttempts = state.attempts;
+  state.sandboxLessonSummaries = state.lessonSummaries;
+  if (state._stash) {
+    state.profiles = state._stash.profiles;
+    state.attempts = state._stash.attempts;
+    state.lessonSummaries = state._stash.lessonSummaries;
+    state.currentProfileId = state._stash.currentProfileId;
+    state._stash = null;
+  }
+  state.adminMode = false;
+  saveState();
+  setRoute('home');
+}
+// Cloud writes must stay off in admin mode even when cloudUser is signed
+// in -- sandbox play-throughs are explicitly meant to never touch a real
+// account's Firestore data.
+function cloudWritesEnabled() { return !!cloudUser && !state.adminMode; }
 function parentDashboard() {
   const summaries = [...state.lessonSummaries].reverse();
   const mistakes = [...state.attempts].filter(a => !a.isCorrect || a.usedHint).slice(-12).reverse();
@@ -1928,7 +2200,7 @@ function parentDashboard() {
           ${state.profiles.map(p => `
             <div class="stat-card">
               <strong>${p.avatar} ${escapeText(p.name)}</strong><span>${escapeText(p.stage)}</span>
-              <p class="small" style="margin:6px 0">Computed level: <strong>${p.microLevel || 1} of ${MAX_TIER}</strong></p>
+              <p class="small" style="margin:6px 0">Computed level: <strong>${p.microLevel || 1} of ${MAX_TIER}</strong> · Overall progress: <strong>${overallProgressScore(p.id)} of ${PARENT_PROGRESS_MAX}</strong></p>
               <p class="small">${Object.keys(p.mastery || {}).length ? Object.keys(p.mastery).map(id => `${escapeText(skillLabelForMicroId(id))}: ${skillScore(p.id, id).label}`).join(', ') : 'No lessons yet'}</p>
               ${Object.keys(p.skillTiers || {}).length ? `<p class="small">${Object.entries(p.skillTiers).map(([id, t]) => `${escapeText(SKILL_DEFS.find(s => s.id === id)?.label || id)}: tier ${t}`).join(', ')}</p>` : ''}
               <div class="level-override">
@@ -1999,7 +2271,7 @@ function parentDashboard() {
       });
       target.updatedAt = Date.now();
       saveState();
-      if (cloudUser) saveChildCloud(cloudUser.uid, target).catch(() => {});
+      if (cloudWritesEnabled()) saveChildCloud(cloudUser.uid, target).catch(() => {});
       render();
     });
   });
@@ -2013,7 +2285,7 @@ function parentDashboard() {
     profile.stage = document.querySelector('#edit-child-stage').value.trim() || profile.stage;
     profile.updatedAt = Date.now();
     saveState();
-    if (cloudUser) saveChildCloud(cloudUser.uid, profile).catch(() => {});
+    if (cloudWritesEnabled()) saveChildCloud(cloudUser.uid, profile).catch(() => {});
     render();
   });
   renderProgressCharts();
@@ -2023,6 +2295,20 @@ function parentDashboard() {
 // via innerHTML -- otherwise each re-render leaks a chart bound to an
 // orphaned canvas.
 let chartInstances = {};
+// A separate, much longer-range 0-100 progress score for the parent
+// dashboard only -- distinct from the internal 1-12 difficulty tier
+// (which governs actual question content and stays capped at 12). Roughly
+// 1000 well-answered lessons reaches 100, but each lesson's contribution is
+// weighted by its accuracy rather than counted flatly, so grinding through
+// lessons without actually improving doesn't move the number much.
+const LESSONS_FOR_FULL_PROGRESS = 1000;
+const PARENT_PROGRESS_MAX = 100;
+function overallProgressScore(childId) {
+  const credits = state.lessonSummaries
+    .filter(l => l.childId === childId)
+    .reduce((sum, l) => sum + Math.max(0, Math.min(1, l.accuracy ?? 0)), 0);
+  return Math.min(PARENT_PROGRESS_MAX, Math.round((credits / LESSONS_FOR_FULL_PROGRESS) * PARENT_PROGRESS_MAX));
+}
 function chronologicalSummaries() {
   return [...state.lessonSummaries].sort((a, b) => (a.lessonNumber || 0) - (b.lessonNumber || 0));
 }
