@@ -276,6 +276,7 @@ function signIn() {
       <p class="small" id="signin-error">${escapeText(authError)}</p>
       <button class="primary cta-large" data-signin>Sign in</button>
       <button class="ghost" data-signup>First time? Create account</button>
+      <button class="link-button" data-route="adminLogin" style="width:fit-content">Admin test mode</button>
     </div>
   `);
   document.querySelector('[data-signin]').addEventListener('click', () => submitAuth(signInParent));
@@ -2094,8 +2095,12 @@ function parentGate() {
 // ones untouched on exit. This is a fixed demo login (not real auth) since
 // its only purpose is letting the app's owner poke at it safely.
 function adminLogin() {
+  // Reachable two ways: from Parent Area (already signed in) or straight
+  // off the sign-in screen (no real account yet) -- Back should return to
+  // wherever it was actually opened from, not always assume Parent Area.
+  const backRoute = isCloudConfigured && !cloudUser ? 'signIn' : 'parentGate';
   shell(html`
-    <div class="top-row"><button class="ghost" data-route="parentGate">Back</button></div>
+    <div class="top-row"><button class="ghost" data-route="${backRoute}">Back</button></div>
     <h1>Admin test mode</h1>
     <p>Try the app without affecting any child's real progress. A separate test profile is used instead, and nothing in this mode syncs to the cloud.</p>
     <div class="grid" style="max-width:380px">
@@ -2149,7 +2154,11 @@ function exitAdminMode() {
   }
   state.adminMode = false;
   saveState();
-  setRoute('home');
+  // If admin mode was entered before ever signing in (straight off the
+  // sign-in screen), there's no real account/profile to land on yet --
+  // go back to sign-in rather than falling through to home/createProfile
+  // and silently skipping authentication.
+  setRoute(isCloudConfigured && !cloudUser ? 'signIn' : 'home');
 }
 // Cloud writes must stay off in admin mode even when cloudUser is signed
 // in -- sandbox play-throughs are explicitly meant to never touch a real
