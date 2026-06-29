@@ -52,6 +52,10 @@ export async function signOutParent() {
   await loadFirebase();
   return authMod.signOut(auth);
 }
+export async function resetParentPassword(email) {
+  await loadFirebase();
+  return authMod.sendPasswordResetEmail(auth, email);
+}
 // Calls callback(user|null) immediately and on every future auth change.
 // Returns an unsubscribe function.
 export async function onAuthChange(callback) {
